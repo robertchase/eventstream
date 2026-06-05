@@ -42,9 +42,56 @@ async def stream_of(name: str) -> str:
 
 async def list_(stream: str | None = None) -> list[dict]:
     """List subscriptions as ``{name, stream}`` dicts, optional stream filter."""
-    items = await backend.client().hgetall(_REGISTRY)
+    client = backend.client()
+    names = sorted(await client.hkeys(_REGISTRY))
+    if not names:
+        return []
+    bound = await client.hmget(_REGISTRY, names)
     return [
-        {"name": name, "stream": bound}
-        for name, bound in sorted(items.items())
-        if stream is None or bound == stream
+        {"name": name, "stream": s}
+        for name, s in zip(names, bound, strict=True)
+        if stream is None or s == stream
+    ]
+
+
+async def show(name: str) -> dict:
+    """Summary stats for a subscription: lag, in-flight, oldest idle, cursor."""
+    stream = await stream_of(name)
+    stream_key = streams.key(stream)
+    client = backend.client()
+
+    groups = await client.xinfo_groups(stream_key)
+    group = next((g for g in groups if g["name"] == name), None)
+    if group is None:  # registered but not present in Redis — corrupted state
+        raise SubscriptionNotFound(
+            f"subscription {name!r} has no consumer group on stream {stream!r}"
+        )
+
+    oldest = await client.xpending_range(stream_key, name, "-", "+", count=1)
+    oldest_idle_ms = int(oldest[0]["time_since_delivered"]) if oldest else 0
+
+    return {
+        "name": name,
+        "stream": stream,
+        "lag": int(group.get("lag", 0) or 0),
+        "in_flight": int(group.get("pending", 0)),
+        "oldest_idle_ms": oldest_idle_ms,
+        "last_delivered_id": group.get("last-delivered-id"),
+    }
+
+
+async def pending(name: str, *, count: int = 10) -> list[dict]:
+    """List pending (leased-but-unacked) entries for a subscription."""
+    stream = await stream_of(name)
+    entries = await backend.client().xpending_range(
+        streams.key(stream), name, "-", "+", count=count
+    )
+    return [
+        {
+            "id": e["message_id"],
+            "consumer": e["consumer"],
+            "idle_ms": int(e["time_since_delivered"]),
+            "delivery_count": int(e["times_delivered"]),
+        }
+        for e in entries
     ]
