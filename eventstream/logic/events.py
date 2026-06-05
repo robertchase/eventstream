@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 import redis.asyncio as redis
 
 from eventstream import config as CONFIG
-from eventstream.logic import backend, streams, subscriptions
+from eventstream.logic import backend, dlq, streams, subscriptions
 
 
 async def publish(stream: str, payload: dict, *, key: str | None = None) -> str:
@@ -49,6 +49,9 @@ async def pull(subscription: str, *, wait: float | None = None) -> dict | None:
 
     reclaimed = await _try_reclaim(client, stream_key, subscription, consumer)
     if reclaimed is not None:
+        if reclaimed["delivery_count"] > CONFIG.max_deliveries:
+            await dlq.move(subscription, stream, reclaimed)
+            return None
         return reclaimed
 
     block = None if wait <= 0 else int(wait * 1000)

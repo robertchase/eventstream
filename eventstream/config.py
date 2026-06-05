@@ -19,3 +19,11 @@ pull_wait_seconds: float = float(os.environ.get("EVENTSTREAM_PULL_WAIT", "30"))
 
 lease_seconds: float = float(os.environ.get("EVENTSTREAM_LEASE", "30"))
 """How long a pulled event is leased before another puller may reclaim it."""
+
+max_deliveries: int = int(os.environ.get("EVENTSTREAM_MAX_DELIVERIES", "5"))
+"""How many deliveries an event gets before being routed to the DLQ.
+
+A value of ``N`` lets the event be handed to a worker up to ``N`` times; on
+the (N+1)th reclaim it is moved to the per-subscription DLQ and acked off
+the stream.
+"""

@@ -21,3 +21,7 @@ class SubscriptionNotFound(EventStreamError):
 
 class SubscriptionExists(EventStreamError):
     """A subscription with the same name already exists on another stream."""
+
+
+class EventNotFound(EventStreamError):
+    """A referenced event id is not present (e.g., not in the DLQ)."""

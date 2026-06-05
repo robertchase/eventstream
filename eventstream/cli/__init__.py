@@ -9,6 +9,7 @@ from __future__ import annotations
 import click
 
 from eventstream.cli import ack as ack_cmd
+from eventstream.cli import dlq as dlq_cmd
 from eventstream.cli import publish as publish_cmd
 from eventstream.cli import pull as pull_cmd
 from eventstream.cli import stream as stream_cmd
@@ -36,3 +37,4 @@ cli.add_command(pull_cmd.pull)
 cli.add_command(ack_cmd.ack)
 cli.add_command(stream_cmd.stream)
 cli.add_command(sub_cmd.sub)
+cli.add_command(dlq_cmd.dlq)
