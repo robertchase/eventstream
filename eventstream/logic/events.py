@@ -1,12 +1,17 @@
 """Event operations: publish, pull, and ack.
 
 ``pull`` enforces lease-and-redeliver semantics: every call first tries to
-claim a pending entry that has been idle longer than the lease window
-(``CONFIG.lease_seconds``) — that's how unacked events reach another worker
-— and only falls back to reading a fresh entry if nothing is idle.
-"""
+claim a pending entry that has been idle longer than the subscription's
+lease window — that's how unacked events reach another worker — and only
+falls back to reading a fresh entry if nothing is idle. The lease window
+and the redelivery cap are per-subscription (see
+``subscriptions.config``); ``CONFIG`` provides the defaults a sub inherits
+when it doesn't override.
 
-from __future__ import annotations
+These functions are CLI-only today but could be promoted to meander handlers
+later. Do **not** add ``from __future__ import annotations`` — see
+``logic/streams.py`` for why.
+"""
 
 import json
 import os
@@ -36,21 +41,25 @@ async def publish(stream: str, payload: dict, *, key: str | None = None) -> str:
 async def pull(subscription: str, *, wait: float | None = None) -> dict | None:
     """Long-poll one event for ``subscription``; return ``None`` on timeout.
 
-    Tries to reclaim an idle pending entry first (older than the lease window),
-    then falls back to a fresh read. The returned event carries
+    Tries to reclaim an idle pending entry first (older than the
+    subscription's lease window), then falls back to a fresh read. If a
+    reclaimed event has exceeded the subscription's redelivery cap, it is
+    moved to the DLQ and ``None`` is returned. The returned event carries
     ``delivery_count`` (1 on first delivery, 2+ on reclaim).
     """
     if wait is None:
         wait = CONFIG.pull_wait_seconds
-    stream = await subscriptions.stream_of(subscription)
-    stream_key = streams.key(stream)
+    cfg = await subscriptions.config(subscription)
+    stream_key = streams.key(cfg["stream"])
+    lease_ms = int(cfg["lease_seconds"] * 1000)
+    max_deliveries = cfg["max_deliveries"]
     client = backend.client()
     consumer = _consumer()
 
-    reclaimed = await _try_reclaim(client, stream_key, subscription, consumer)
+    reclaimed = await _try_reclaim(client, stream_key, subscription, consumer, lease_ms)
     if reclaimed is not None:
-        if reclaimed["delivery_count"] > CONFIG.max_deliveries:
-            await dlq.move(subscription, stream, reclaimed)
+        if reclaimed["delivery_count"] > max_deliveries:
+            await dlq.move(subscription, cfg["stream"], reclaimed)
             return None
         return reclaimed
 
@@ -76,9 +85,9 @@ async def _try_reclaim(
     stream_key: str,
     subscription: str,
     consumer: str,
+    min_idle_ms: int,
 ) -> dict | None:
     """Claim one pending entry idle longer than the lease, if any exists."""
-    min_idle_ms = int(CONFIG.lease_seconds * 1000)
     _next, claimed, _deleted = await client.xautoclaim(
         stream_key,
         subscription,

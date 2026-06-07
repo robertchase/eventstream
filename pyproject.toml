@@ -1,10 +1,12 @@
 [project]
 name = "eventstream"
-version = "0.2.0"
+version = "0.3.0"
 description = "A pull-based application event bus."
 requires-python = ">=3.12"
 dependencies = [
     "click>=8.1",
+    "jinja2>=3.1",
+    "meander @ git+https://github.com/robertchase/meander.git@master",
     "redis>=8.0,<9",
 ]
 
@@ -23,6 +25,9 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["eventstream"]

@@ -5,9 +5,10 @@ the next ``pull`` moves it out of its stream's pending set and into a
 per-subscription DLQ hash. The DLQ is keyed by event id; admins can peek,
 drop, or purge dead entries. Redelivering from the DLQ is deferred per
 ``design/api.md``.
-"""
 
-from __future__ import annotations
+Functions here are registered as meander HTTP handlers. Do **not** add
+``from __future__ import annotations`` — see ``logic/streams.py`` for why.
+"""
 
 import json
 from datetime import UTC, datetime

@@ -27,3 +27,9 @@ A value of ``N`` lets the event be handed to a worker up to ``N`` times; on
 the (N+1)th reclaim it is moved to the per-subscription DLQ and acked off
 the stream.
 """
+
+http_host: str = os.environ.get("EVENTSTREAM_HOST", "127.0.0.1")
+"""Host the HTTP server binds to."""
+
+http_port: int = int(os.environ.get("EVENTSTREAM_PORT", "8080"))
+"""Port the HTTP server binds to."""

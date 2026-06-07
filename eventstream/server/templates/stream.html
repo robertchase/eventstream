@@ -1,0 +1,34 @@
+<div id="content" hx-get="/streams/{{ info.name }}" hx-trigger="every 3s" hx-swap="outerHTML">
+<h1>stream <code>{{ info.name }}</code></h1>
+
+<section>
+<h2>info</h2>
+<dl class="stats">
+<dt>length</dt><dd>{{ info.length }}</dd>
+<dt>first</dt><dd>{% if info.first %}<code>{{ info.first.id }}</code> &nbsp;<span class="muted">{{ info.first.ts }}</span>{% else %}<span class="empty">—</span>{% endif %}</dd>
+<dt>last</dt><dd>{% if info.last %}<code>{{ info.last.id }}</code> &nbsp;<span class="muted">{{ info.last.ts }}</span>{% else %}<span class="empty">—</span>{% endif %}</dd>
+<dt>subscriptions</dt><dd>{% if info.groups %}{% for g in info.groups %}<a href="/subscriptions/{{ g }}">{{ g }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% else %}<span class="empty">—</span>{% endif %}</dd>
+</dl>
+</section>
+
+<section>
+<h2>recent events (newest first)</h2>
+{% if recent %}
+<table>
+<thead><tr><th>id</th><th>ts</th><th>key</th><th>payload</th></tr></thead>
+<tbody>
+{% for e in recent %}
+<tr>
+<td><code>{{ e.id }}</code></td>
+<td class="muted">{{ e.ts }}</td>
+<td>{{ e.key or "—" }}</td>
+<td><code>{{ e.payload | tojson }}</code></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">no events</p>
+{% endif %}
+</section>
+</div>

@@ -10,8 +10,10 @@ import click
 
 from eventstream.cli import ack as ack_cmd
 from eventstream.cli import dlq as dlq_cmd
+from eventstream.cli import migrate as migrate_cmd
 from eventstream.cli import publish as publish_cmd
 from eventstream.cli import pull as pull_cmd
+from eventstream.cli import server as server_cmd
 from eventstream.cli import stream as stream_cmd
 from eventstream.cli import sub as sub_cmd
 from eventstream.logic.exceptions import EventStreamError
@@ -38,3 +40,5 @@ cli.add_command(ack_cmd.ack)
 cli.add_command(stream_cmd.stream)
 cli.add_command(sub_cmd.sub)
 cli.add_command(dlq_cmd.dlq)
+cli.add_command(server_cmd.server)
+cli.add_command(migrate_cmd.migrate)

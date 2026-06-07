@@ -1,0 +1,36 @@
+<div id="content" hx-get="/" hx-trigger="every 5s" hx-swap="outerHTML">
+<section>
+<h2>Streams</h2>
+{% if streams %}
+<table>
+<thead><tr><th>name</th></tr></thead>
+<tbody>
+{% for s in streams %}
+<tr><td><a href="/streams/{{ s }}">{{ s }}</a></td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">no streams</p>
+{% endif %}
+</section>
+
+<section>
+<h2>Subscriptions</h2>
+{% if subscriptions %}
+<table>
+<thead><tr><th>name</th><th>stream</th></tr></thead>
+<tbody>
+{% for s in subscriptions %}
+<tr>
+<td><a href="/subscriptions/{{ s.name }}">{{ s.name }}</a></td>
+<td><a href="/streams/{{ s.stream }}">{{ s.stream }}</a></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">no subscriptions</p>
+{% endif %}
+</section>
+</div>

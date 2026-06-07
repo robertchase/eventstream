@@ -1,0 +1,57 @@
+<div id="content" hx-get="/subscriptions/{{ info.name }}" hx-trigger="every 3s" hx-swap="outerHTML">
+<h1>subscription <code>{{ info.name }}</code></h1>
+<p class="muted">on stream <a href="/streams/{{ info.stream }}">{{ info.stream }}</a></p>
+
+<section>
+<h2>info</h2>
+<dl class="stats">
+<dt>lag</dt><dd>{{ info.lag }}</dd>
+<dt>in_flight</dt><dd>{{ info.in_flight }}</dd>
+<dt>oldest_idle</dt><dd>{% if info.in_flight %}{{ "%.1fs"|format(info.oldest_idle_ms / 1000) }}{% else %}<span class="empty">—</span>{% endif %}</dd>
+<dt>last_delivered</dt><dd><code>{{ info.last_delivered_id or "—" }}</code></dd>
+</dl>
+</section>
+
+<section>
+<h2>pending (leased, unacked)</h2>
+{% if pending %}
+<table>
+<thead><tr><th>event id</th><th>consumer</th><th>idle</th><th>deliveries</th></tr></thead>
+<tbody>
+{% for p in pending %}
+<tr>
+<td><code>{{ p.id }}</code></td>
+<td class="muted">{{ p.consumer }}</td>
+<td>{{ "%.1fs"|format(p.idle_ms / 1000) }}</td>
+<td>{{ p.delivery_count }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">nothing leased</p>
+{% endif %}
+</section>
+
+<section>
+<h2>DLQ</h2>
+{% if dead %}
+<table>
+<thead><tr><th>event id</th><th>key</th><th>deliveries</th><th>dead at</th><th>payload</th></tr></thead>
+<tbody>
+{% for d in dead %}
+<tr>
+<td><code>{{ d.id }}</code></td>
+<td>{{ d.key or "—" }}</td>
+<td>{{ d.delivery_count }}</td>
+<td class="muted">{{ d.dead_at }}</td>
+<td><code>{{ d.payload | tojson }}</code></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">empty</p>
+{% endif %}
+</section>
+</div>

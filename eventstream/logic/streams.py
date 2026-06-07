@@ -1,6 +1,10 @@
-"""Stream operations: the append-only logs events are published to."""
+"""Stream operations: the append-only logs events are published to.
 
-from __future__ import annotations
+Functions in this module are registered as meander HTTP handlers. Do **not**
+add ``from __future__ import annotations`` — it turns ``int`` and ``bool``
+into strings in ``__annotations__``, which silently defeats meander's query
+parameter type coercion (``?count=10`` arrives as ``"10"``).
+"""
 
 import json
 from datetime import UTC, datetime
