@@ -1,127 +1,229 @@
-# Workflow definition format
+# Workflow definition format — the `.flow` DSL
 
-The static format for workflow definitions consumed by the jobs
-orchestrator. See `design/jobs.md` for the runtime that executes these.
+A workflow definition is a plain-text `.flow` file in a line-oriented DSL.
+Each line is `DIRECTIVE [arg1 [arg2 [...]]]`; comments start with `#`; blank
+lines are ignored. Indentation is purely cosmetic — the parser tracks the
+current open block from directive order, the same trick
+[robertchase/fsm](https://github.com/robertchase/fsm) uses.
 
-A definition is structured data (JSON on the wire; YAML shown here for
-readability). It describes a finite state machine: states, the events
-each state reacts to, and the actions that fire. It contains **no
-executable code** — only declarative bindings and field references.
+The file describes a finite state machine: states, the events each state
+reacts to, and the actions that fire. It contains **no executable code** —
+only declarative directives and field references.
 
-## Top-level structure
+The parser in `eventstream/logic/workflow_parser.py` converts a `.flow` file
+into an AST (a JSON-serializable dict) that the runtime walks. Cross-
+reference validation (target states exist, action refs resolve, etc.)
+happens at register time; missing identifiers fail fast with line numbers.
 
-```yaml
-name: order-fulfillment      # workflow identity
-version: 1                   # integer, server-assigned on register
-initial: charging            # starting state
+## File order
 
-actions:                     # optional: reusable named actions
-  notify-customer:
-    emit:
-      stream: notifications
-      event: notify
-      payload: { job: $job.id, type: email, to: $context.customer.email }
+The DSL is line-oriented, but it does impose one structural rule:
 
-states:
-  charging:
-    enter: [ ... ]           # action sequence on entering the state
-    exit:  [ ... ]           # action sequence on leaving the state
-    on:                      # event handlers
-      success: { do: [ ... ], goto: shipping }
-      declined: { do: [ notify-customer ], goto: cancelled }
-  done:   { terminal: true }
-  failed: { terminal: true }
+> **`ACTION` definitions must come before any `STATE` or `DEFAULT`
+> directive.** Once the parser sees a `STATE` or `DEFAULT`, the `ACTION`
+> keyword no longer opens a new top-level definition — inside the handler
+> scopes those directives open, `ACTION <name>` is always a reference.
+
+So the canonical order in a workflow file is:
+
+1. Metadata (`NAME`, `INITIAL`, `DESCRIPTION`)
+2. `ACTION` definitions
+3. `DEFAULT` directives
+4. `STATE` blocks
+
+`DEFAULT` and `STATE` may be interleaved if you prefer (the validator
+doesn't care), but actions must precede them all. This is the same shape
+robertchase/fsm uses (where `HANDLER` lines sit at the bottom).
+
+## Worked example
+
+```
+# Order fulfillment workflow
+NAME        order-fulfillment
+INITIAL     charging
+DESCRIPTION Charges card, ships order, notifies on failure
+
+# Reusable actions
+ACTION charge-card
+  EMIT payments charge
+  PAYLOAD job    $job.id
+  PAYLOAD amount $context.order.total
+
+ACTION record-charge
+  SET txn_id     $event.data.txn_id
+  SET charged_at $job.now
+
+ACTION ship-order
+  EMIT fulfillment ship
+  PAYLOAD job     $job.id
+  PAYLOAD address $context.customer.address
+
+ACTION notify-customer-decline
+  EMIT notifications notify
+  PAYLOAD job  $job.id
+  PAYLOAD type email
+  PAYLOAD to   $context.customer.email
+
+# Workflow-wide error handling: any unhandled error → failed terminal state
+DEFAULT error failed
+
+# States
+STATE charging
+  ENTER
+    ACTION charge-card
+  EVENT success shipping
+    ACTION record-charge
+  EVENT declined cancelled
+
+STATE shipping
+  ENTER
+    ACTION ship-order
+  EVENT success done
+
+STATE cancelled
+  ENTER
+    ACTION notify-customer-decline
+  EVENT success failed
+
+STATE done   TERMINAL
+STATE failed TERMINAL
 ```
 
-## States and handlers
+## Top-level directives
 
-A state has optional `enter` / `exit` action sequences and an `on` map of
-event handlers. A handler is:
+| Directive | Argument shape | Purpose |
+|---|---|---|
+| `NAME <name>` | one token | Workflow identity. Required, set once. |
+| `INITIAL <state>` | one token | Starting state. Required, set once. |
+| `DESCRIPTION <text>` | rest-of-line | Optional, admin display. |
+| `STATE <name> [TERMINAL]` | one or two tokens | Open a state block. Trailing `TERMINAL` marks the state as final (no `EVENT` directives allowed). |
+| `ACTION <name>` | one token | Open a named action definition block. The action's operation type is set by the first directive inside the block. |
+| `DEFAULT <event> [<next-state>]` | event + optional state | Workflow-wide fallback handler for an event. Same shape as `EVENT`. Fires only when the current state has no `EVENT <event>`. |
 
-```yaml
-<event>:
-  do:   [ action, action, ... ]    # the action sequence
-  goto: <target-state>             # optional transition (zero or one)
+There is **no `VERSION` directive in the file** — version is server-assigned
+at registration time; each call to `workflows register` bumps it. Having a
+version inside the file would make the same source un-re-registerable.
+
+## State blocks
+
+Inside `STATE name`, the following sub-directives open handler scopes:
+
+| Directive | Argument shape | Purpose |
+|---|---|---|
+| `ENTER` | none | Open the enter-handler scope. Subsequent `ACTION` lines append to the enter sequence. |
+| `EXIT` | none | Open the exit-handler scope. Same pattern as `ENTER`. |
+| `EVENT <name> [<next-state>]` | event + optional state | Open a handler for `<name>`. Optional trailing state is the transition target. |
+
+Within `ENTER` / `EXIT` / `EVENT`, the only valid sub-directive is `ACTION
+<ref>` — a reference to a named action defined at top level. **No
+overrides; no inline emits.** Variants of an action are separate
+definitions.
+
+Terminal states (`STATE done TERMINAL`) have no inner content — any
+`ENTER`/`EXIT`/`EVENT` inside a terminal state is a parse error.
+
+## Action blocks
+
+Each `ACTION name` block contains exactly one operation type. The first
+operation directive sets the type; subsequent directives must match.
+
+### `EMIT` — publish an event to a stream
+
+```
+ACTION charge-card
+  EMIT payments charge
+  PAYLOAD job    $job.id
+  PAYLOAD amount $context.order.total
 ```
 
-Per the execution rules, a handler is "one or more actions followed by
-zero or one transition." `goto` may be omitted (internal handling, stays
-in the state). `enter`/`exit` are bare action sequences — no `goto`.
+- `EMIT <stream> <event>` — exactly two arguments.
+- `PAYLOAD <key> <value>` — zero or more lines. Each line adds a field to
+  the emit's payload. The value is everything after the second token (so
+  values can contain spaces).
 
-A `terminal: true` state has no `on` handlers; reaching it ends the job.
+### `SET` — patch fields into the job context
 
-## Actions
-
-There is **one primitive — emit an event** — plus a few non-emitting
-helpers. An action's meaning is supplied by the workflow, not fixed by
-the system. The same action name in a different workflow can bind to a
-different event, stream, and payload.
-
-### emit
-
-```yaml
-emit:
-  stream:  notifications     # which stream the event lands on
-  event:   notify            # event type
-  payload: { ... }           # templated (see below)
+```
+ACTION record-charge
+  SET txn_id     $event.data.txn_id
+  SET charged_at $job.now
 ```
 
-The event is published to its stream — available to any consumer
-(worker) of that stream. It is *also* offered back to the FSM per the
-evaluation rules below.
+- One or more `SET <key> <value>` lines in the block. Each adds (or
+  overwrites) a key in the job's context.
+- Multiple `SET` lines are allowed in a single action block, so a logical
+  "cluster of field updates" stays as one named action.
 
-### Non-emitting actions
+### `LOG` — emit a log entry
 
-These produce no event (contribute no carry):
-
-```yaml
-set:   { txn_id: $event.data.txn_id }      # patch-merge into job context
-log:   { level: info, message: "charged $context.order.total" }
-timer: { after: 10m, event: timeout }      # schedule an event to this job
+```
+ACTION log-cancellation
+  LOG order $job.id cancelled by $context.customer.email
 ```
 
-`timer` uses the same sweep as scheduled delivery (`design/api.md`), but
-the event is delivered back to *this job* rather than to a stream — the
-mechanism behind per-state deadlines.
+- Exactly one `LOG <message>` line. Level is implicit (info). The message
+  is rest-of-line, with `$`-references interpolated at runtime.
 
-### Inline vs named
+### `TIMER` — schedule a synthetic event back to this job
 
-An action is either written inline or referenced from the `actions:`
-section by name. Named actions may be referenced with a shallow override:
-
-```yaml
-do:
-  - notify-customer                              # by name
-  - notify-customer: { payload: { type: sms } }  # name + shallow override
-  - emit: { stream: audit, event: charged, payload: { job: $job.id } }  # inline
+```
+ACTION schedule-followup
+  TIMER 24h followup-due
 ```
 
-## Payload templating
+- Exactly one `TIMER <duration> <event>` line.
+- Duration is a single token: an integer followed by a unit suffix —
+  `s` seconds, `m` minutes, `h` hours, `d` days. Examples: `30s`, `10m`,
+  `1h`, `7d`. No compound durations in v1.
+- `<event>` is the synthetic event name that will be fired back to this
+  job's current state when the timer expires.
 
-Payloads are built from **field references and literals only — no
-expressions, no conditionals, no arithmetic**. Keeping payloads
-non-computational is what preserves "the system does not execute jobs."
+## Reference syntax
 
-References:
+`$`-prefix marks references; anything else is a literal string. Three
+reference roots:
 
-| Reference            | Resolves to                                    |
-|----------------------|------------------------------------------------|
-| `$job.id`            | the job instance id                            |
-| `$job.workflow`      | workflow name                                  |
-| `$job.version`       | workflow version                               |
-| `$job.state`         | current state name                             |
-| `$context.<path>`    | dotted path into the job context               |
-| `$event.<path>`      | the triggering event's payload/data (in `do`)  |
+| Reference | Resolves to |
+|---|---|
+| `$job.<path>` | job metadata: `id`, `workflow`, `version`, `state`, `now` |
+| `$context.<path>` | a dotted path into the job context |
+| `$event.<path>` | the triggering event's body (in handler actions) |
 
-Everything else is a literal (string, number, bool, object, array).
-A reference to a missing path is a runtime error → the job's error
-handling fires (see `design/jobs.md`). Default/optional-reference syntax
-is an open question.
+The DSL has **no expressions, no conditionals, no arithmetic** — payload
+construction is non-computational by design. The parser accepts any
+dotted path syntactically; whether the path resolves at runtime is the
+runtime's concern (a missing path triggers the job's error event).
 
-## Evaluation semantics
+There is no quoting and no escape for a literal `$` — values that start
+with `$` are always treated as references. Acceptable for v1; revisit
+when a real use case requires literal dollar signs.
 
-How one triggering event is processed (run-to-completion). Given event
-`E` in state `S`, with handler `(do=A, goto=T)`:
+## DEFAULT directive
+
+A workflow-wide fallback handler for any event the current state doesn't
+explicitly handle. Same shape as `EVENT`:
+
+```
+# bare transition, no actions
+DEFAULT error failed
+
+# with actions, no transition (stays in current state)
+DEFAULT heartbeat
+  ACTION record-heartbeat
+
+# with actions and transition
+DEFAULT error failed
+  ACTION log-failure
+```
+
+The most common use is `DEFAULT error failed` — every state's unhandled
+errors fall through to a terminal failed state.
+
+## Carry rule (evaluation semantics)
+
+These are runtime semantics, not parser concerns, but they shape how
+workflows are authored. Given event `E` arriving in state `S` with handler
+`(do=A, goto=T)`:
 
 ```
 run A in order
@@ -143,80 +245,114 @@ Consequences worth knowing when authoring:
 
 - **Only the last action's event carries.** Every emit still reaches its
   stream, but to make the FSM react to an emission, that emission must be
-  last in its sequence.
-- **No handler for the carried event → quiesce.** This is the normal
-  case: an `enter` action emits a step to a worker; the state has no
-  handler for that event, so the job waits for the worker's outcome.
-- **Cascades can loop.** `enter` emits → transition → `enter` emits → …
-  is legal. The runtime caps internal events per external trigger (see
-  `design/jobs.md`); overrun is an error transition, not a hang.
+  the last in its sequence.
+- **No handler for the carried event → quiesce.** The normal case: an
+  `ENTER` action emits a step event to a worker; the state has no handler
+  for the worker's event yet, so the job waits for the worker's outcome
+  (which arrives as an `ack-with-outcome`).
+- **Cascades can loop.** `enter` emits → transition → `enter` emits → … is
+  legal. The runtime caps internal events per external trigger; overrun is
+  an error transition, not a hang.
 
 ## Validation (at register time)
 
-- `initial` names an existing state.
-- Every `goto` target exists.
-- Every named-action reference resolves in `actions:`.
-- Terminal states have no `on` handlers.
-- All `$context`/`$event` references are syntactically valid (path
-  existence is necessarily a runtime check).
+The parser raises with line numbers for syntactic errors. The validator
+then walks the AST and rejects:
 
-## Complete example
+- Missing or duplicate `NAME` / `INITIAL`.
+- `INITIAL` naming a non-existent state.
+- `STATE` / `ACTION` / `DEFAULT event` redefined.
+- Any `EVENT <name> <target>` or `DEFAULT <name> <target>` where `<target>`
+  isn't a defined state.
+- Any `ACTION <ref>` inside `ENTER`/`EXIT`/`EVENT` where `<ref>` isn't a
+  defined action.
+- `ACTION` blocks with no operation directive (`EMIT`/`SET`/`LOG`/`TIMER`).
+- `ENTER`/`EXIT`/`EVENT` inside a terminal state.
+- `EMIT` blocks with mixed operation types, `SET` mixed with non-SET ops,
+  or `PAYLOAD` outside an `EMIT` action.
+- References in `SET`/`LOG`/`PAYLOAD` whose path root is not `job`,
+  `context`, or `event`.
 
-```yaml
-name: order-fulfillment
-version: 1
-initial: charging
-actions:
-  notify-customer:
-    emit:
-      stream: notifications
-      event: notify
-      payload: { job: $job.id, type: email, to: $context.customer.email }
-states:
-  charging:
-    enter:
-      - emit:
-          stream: payments
-          event: charge
-          payload: { job: $job.id, amount: $context.order.total }
-    on:
-      success:
-        do: [ { set: { txn_id: $event.data.txn_id } } ]
-        goto: shipping
-      declined:
-        do: [ notify-customer ]
-        goto: cancelled
-  shipping:
-    enter:
-      - emit:
-          stream: fulfillment
-          event: ship
-          payload: { job: $job.id, address: $context.customer.address }
-    on:
-      success: { goto: done }
-  cancelled:
-    enter: [ notify-customer ]
-    on:
-      success: { goto: failed }
-  done:   { terminal: true }
-  failed: { terminal: true }
+Runtime checks (not validation): path existence on `$context.foo.bar`.
+
+## AST shape (what the parser produces)
+
+```json
+{
+  "name": "order-fulfillment",
+  "description": "Charges card, ships order, notifies on failure",
+  "initial": "charging",
+  "defaults": {
+    "error": {"do": [], "goto": "failed"}
+  },
+  "actions": {
+    "charge-card": {
+      "type": "emit",
+      "stream": "payments",
+      "event": "charge",
+      "payload": {
+        "job":    {"ref": "job.id"},
+        "amount": {"ref": "context.order.total"}
+      }
+    },
+    "record-charge": {
+      "type": "set",
+      "fields": {
+        "txn_id":     {"ref": "event.data.txn_id"},
+        "charged_at": {"ref": "job.now"}
+      }
+    },
+    "schedule-followup": {
+      "type": "timer",
+      "delay_seconds": 86400,
+      "event": "followup-due"
+    }
+  },
+  "states": {
+    "charging": {
+      "enter": ["charge-card"],
+      "exit":  [],
+      "events": {
+        "success":  {"do": ["record-charge"], "goto": "shipping"},
+        "declined": {"do": [],                 "goto": "cancelled"}
+      }
+    },
+    "done":   {"terminal": true},
+    "failed": {"terminal": true}
+  }
+}
 ```
 
-## Open questions / deferred
+Values are tagged: a literal string is a bare string, a reference is a
+`{"ref": "<path>"}` dict. The runtime resolves refs against the current
+`(job, context, event)` triple.
 
-- **Bare transitions.** Rule 1 reads "one or more actions"; but
-  `success: { goto: shipping }` with no `do` is extremely common.
-  Recommend allowing empty `do`. Confirm.
-- **Conditional guards.** v1 branches on event *name* only
-  (`success` / `declined`). Context-conditional transitions
-  (`amount > 100`) need an expression sublanguage — which conflicts with
-  the no-expressions boundary. Deferred until that tradeoff is decided.
-- **Missing-reference behavior.** Error vs. default-value syntax
-  (`$context.foo ?? "x"`). Defaulting reintroduces a little computation;
-  deferred.
-- **Parallel regions / fan-out.** A single FSM is in one state at a time.
-  Concurrent steps with a join are out of scope for v1 (the statechart
-  cliff from earlier discussion).
-- **Payload projection.** Workers currently receive whatever the payload
-  template builds. A declared per-step "needs these context keys"
-  projection is deferred.
+## Storage
+
+Parser output is stored in Redis along with the original source text:
+
+```
+eventstream:workflows                       SET of names
+eventstream:workflow:<name>:versions        SORTED SET version → ts
+eventstream:workflow:<name>:<version>       HASH {source, ast}
+```
+
+The source is kept so `workflow show <name> --source` round-trips the
+original text exactly; the runtime always uses the AST.
+
+## Open / deferred
+
+- **Overrides on action references.** Today an `ACTION ref` is the
+  complete line — no per-call payload overrides. A future relaxation would
+  allow indented `PAYLOAD` lines after the reference. Workable; deferred
+  until a real use case justifies the merge rule.
+- **Conditional guards.** v1 branches purely on event *name*. Context-
+  conditional transitions (`WHEN amount > 100 GOTO ...`) would require an
+  expression sublanguage — which conflicts with the no-expressions stance
+  on payloads. Open and deferred.
+- **Parallel regions / fan-out.** One current state at a time. Statechart
+  semantics with parallel regions are out of scope.
+- **Compound timer durations.** `1h30m` syntax. Defer.
+- **Escape for literal `$`.** No escape today. Add when needed.
+- **VERSION pinning in the file.** Today version is fully server-side.
+  Could add `EXPECT_VERSION N` for safety. Defer.

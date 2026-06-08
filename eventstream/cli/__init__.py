@@ -16,6 +16,7 @@ from eventstream.cli import pull as pull_cmd
 from eventstream.cli import server as server_cmd
 from eventstream.cli import stream as stream_cmd
 from eventstream.cli import sub as sub_cmd
+from eventstream.cli import workflow as workflow_cmd
 from eventstream.logic.exceptions import EventStreamError
 
 
@@ -42,3 +43,4 @@ cli.add_command(sub_cmd.sub)
 cli.add_command(dlq_cmd.dlq)
 cli.add_command(server_cmd.server)
 cli.add_command(migrate_cmd.migrate)
+cli.add_command(workflow_cmd.workflow)
