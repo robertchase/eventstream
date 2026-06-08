@@ -10,6 +10,7 @@ import click
 
 from eventstream.cli import ack as ack_cmd
 from eventstream.cli import dlq as dlq_cmd
+from eventstream.cli import jobs as jobs_cmd
 from eventstream.cli import migrate as migrate_cmd
 from eventstream.cli import publish as publish_cmd
 from eventstream.cli import pull as pull_cmd
@@ -44,3 +45,4 @@ cli.add_command(dlq_cmd.dlq)
 cli.add_command(server_cmd.server)
 cli.add_command(migrate_cmd.migrate)
 cli.add_command(workflow_cmd.workflow)
+cli.add_command(jobs_cmd.jobs_group, name="jobs")

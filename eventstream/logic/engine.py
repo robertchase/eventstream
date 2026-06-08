@@ -1,0 +1,240 @@
+"""Pure FSM engine for workflow execution.
+
+Takes a workflow AST + current state + context + a triggering event and
+walks the FSM until it quiesces or reaches a terminal state. All side
+effects (emitted events, scheduled timers, log lines, recorded transitions)
+are collected on a :class:`Recorder` that the persistence layer flushes
+afterward. No I/O happens here.
+
+Evaluation semantics (per ``design/workflow-format.md``):
+
+* Run the matched handler's action sequence in order. Track the *carry*
+  event — the carry equals whatever the LAST action returned. EMIT actions
+  return ``{"name", "data"}``; SET / LOG / TIMER return ``None``.
+* On transition, run ``S.exit``, switch state, run ``T.enter``. The carry
+  is updated by every action that ran, so it ends up being the last
+  action's emit across the whole ``do → exit → enter`` chain.
+* If the carry is not ``None``, process it as the next event (cascade).
+* No handler for the event → quiesce.
+* Per-trigger cascade budget caps internal loops.
+
+Functions in this module are registered as meander HTTP handlers. Do **not**
+add ``from __future__ import annotations`` — see ``logic/streams.py`` for
+why.
+"""
+
+import logging
+import re
+
+CASCADE_LIMIT = 100
+
+_REF_RE = re.compile(r"\$([a-zA-Z_][a-zA-Z_0-9-]*(?:\.[a-zA-Z_][a-zA-Z_0-9-]*)*)")
+
+_log = logging.getLogger("eventstream.jobs")
+
+
+class EngineError(Exception):
+    """Base for engine-layer errors."""
+
+
+class MissingReference(EngineError):
+    """A ``$``-reference could not be resolved against the current scope."""
+
+
+class CascadeBudgetExceeded(EngineError):
+    """Too many internal events triggered by one external event."""
+
+
+class Recorder:
+    """Collects side effects during one engine run.
+
+    Logs flow to ``eventstream.jobs`` immediately (with job_id correlation);
+    emits, timers, and transitions accumulate for the persistence layer to
+    flush atomically with the new job state.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self.emits: list[dict] = []
+        self.timers: list[dict] = []
+        self.logs: list[str] = []
+        self.transitions: list[dict] = []
+
+    def emit(self, stream: str, event_type: str, payload: dict) -> dict:
+        """Record an EMIT side effect and return its carry shape."""
+        self.emits.append(
+            {"stream": stream, "event_type": event_type, "payload": payload}
+        )
+        return {"name": event_type, "data": payload}
+
+    def timer(self, event: str, delay_seconds: int) -> None:
+        self.timers.append({"event": event, "delay_seconds": delay_seconds})
+
+    def log(self, message: str) -> None:
+        self.logs.append(message)
+        _log.info("[job=%s] %s", self.job_id, message)
+
+    def transition(self, from_state: str, event_name: str, to_state: str) -> None:
+        self.transitions.append(
+            {"from": from_state, "event": event_name, "to": to_state}
+        )
+
+
+def step(
+    ast: dict,
+    state: str,
+    context: dict,
+    trigger_event: dict,
+    *,
+    recorder: Recorder,
+) -> str:
+    """Process one trigger event, cascading until quiesce or terminal.
+
+    ``context`` is mutated in place by ``SET`` actions. Returns the final
+    state name. Raises :class:`CascadeBudgetExceeded` if internal events
+    fail to converge.
+    """
+    event = trigger_event
+    cascades = 0
+
+    while True:
+        cascades += 1
+        if cascades > CASCADE_LIMIT:
+            raise CascadeBudgetExceeded(
+                f"cascade budget {CASCADE_LIMIT} exceeded; "
+                f"last event was {event['name']!r}"
+            )
+
+        handler = _find_handler(ast, state, event["name"])
+        if handler is None:
+            return state
+
+        carry = _run_actions(handler["do"], ast, context, event, recorder, initial=None)
+        target = handler.get("goto")
+
+        if target:
+            recorder.transition(state, event["name"], target)
+            carry = _run_actions(
+                ast["states"][state].get("exit", []),
+                ast,
+                context,
+                event,
+                recorder,
+                initial=carry,
+            )
+            state = target
+            carry = _run_actions(
+                ast["states"][state].get("enter", []),
+                ast,
+                context,
+                event,
+                recorder,
+                initial=carry,
+            )
+            if ast["states"][state].get("terminal"):
+                return state
+
+        if carry is None:
+            return state
+
+        event = carry
+
+
+def _find_handler(ast: dict, state: str, event_name: str) -> dict | None:
+    """Return the handler for ``event_name`` in ``state``, falling back to DEFAULT."""
+    state_def = ast["states"][state]
+    if state_def.get("terminal"):
+        return None
+    events = state_def.get("events", {})
+    if event_name in events:
+        return events[event_name]
+    return ast["defaults"].get(event_name)
+
+
+def _run_actions(
+    refs: list,
+    ast: dict,
+    context: dict,
+    event: dict,
+    recorder: Recorder,
+    *,
+    initial,
+):
+    """Execute a list of action refs in order; return the LAST action's result.
+
+    The carry rule: only the last action's return matters. If the last
+    action is SET/LOG/TIMER (returns None), the carry is None — overriding
+    any earlier EMIT in the same sequence.
+    """
+    carry = initial
+    for ref in refs:
+        carry = _execute_action(ast["actions"][ref], ast, context, event, recorder)
+    return carry
+
+
+def _execute_action(
+    action: dict, ast: dict, context: dict, event: dict, recorder: Recorder
+):
+    """Execute one action; return its carry (EMIT) or ``None`` (SET/LOG/TIMER)."""
+    op = action["type"]
+    job = {"id": recorder.job_id}
+
+    if op == "emit":
+        payload = {
+            k: _resolve(v, job, context, event) for k, v in action["payload"].items()
+        }
+        return recorder.emit(action["stream"], action["event"], payload)
+
+    if op == "set":
+        for k, v in action["fields"].items():
+            context[k] = _resolve(v, job, context, event)
+        return None
+
+    if op == "log":
+        recorder.log(_interpolate(action["message"], job, context, event))
+        return None
+
+    if op == "timer":
+        recorder.timer(action["event"], action["delay_seconds"])
+        return None
+
+    raise EngineError(f"unknown action type {op!r}")
+
+
+def _resolve(value, job: dict, context: dict, event: dict):
+    """Resolve a literal or ``{ref: path}`` tagged value against the scope."""
+    if isinstance(value, dict) and "ref" in value:
+        return _resolve_path(value["ref"], job, context, event)
+    return value
+
+
+def _resolve_path(path: str, job: dict, context: dict, event: dict):
+    """Walk a dotted path like ``context.order.total`` to a concrete value."""
+    parts = path.split(".")
+    root = parts[0]
+    if root == "job":
+        obj = job
+    elif root == "context":
+        obj = context
+    elif root == "event":
+        obj = event
+    else:
+        raise MissingReference(f"unknown reference root: ${path}")
+
+    for p in parts[1:]:
+        if not isinstance(obj, dict) or p not in obj:
+            raise MissingReference(f"missing path: ${path}")
+        obj = obj[p]
+    return obj
+
+
+def _interpolate(message: str, job: dict, context: dict, event: dict) -> str:
+    """Replace ``$word(.word)*`` refs in a message string with resolved values."""
+
+    def sub(m):
+        try:
+            return str(_resolve_path(m.group(1), job, context, event))
+        except MissingReference:
+            return m.group(0)
+
+    return _REF_RE.sub(sub, message)
