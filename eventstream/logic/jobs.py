@@ -1,23 +1,37 @@
-"""Job lifecycle: create / get / list / advance / cancel.
+"""Job lifecycle: create / get / list / advance / cancel + ack routing + timers.
 
-This is the persistence wrapper around :mod:`eventstream.logic.engine`. The
-engine runs in memory and produces a :class:`Recorder` describing side
-effects (emitted events, scheduled timers, transitions); this module flushes
-them: persists the new job state to Redis and publishes the recorded emits
-to their streams via :mod:`eventstream.logic.events`.
+The persistence wrapper around :mod:`eventstream.logic.engine`. The engine
+runs in memory and produces a :class:`Recorder` describing side effects
+(emitted events, scheduled timers, transitions); this module flushes them:
+persists the new job state to Redis, publishes the recorded emits via
+:mod:`eventstream.logic.events`, and writes the **emit-routing map** so a
+worker's ack-with-outcome can find its way back to the right job.
 
 Storage shape::
 
     eventstream:jobs                            SET of job ids
-    eventstream:job:<id>                        HASH {workflow, version, state,
-                                                       context, status,
-                                                       created_at, updated_at}
+    eventstream:job:<id>                        HASH {workflow, version,
+                                                       state, context,
+                                                       status, created_at,
+                                                       updated_at}
     eventstream:job:<id>:history                LIST of JSON transition records
+    eventstream:emitted:<event_id>              HASH {job_id, state}
+                                                  (TTL EMIT_MAP_TTL_SECONDS)
+    eventstream:job_timers                      ZSET member=JSON({job_id,event,
+                                                                 nonce})
+                                                     score=fire_at_unix
 
-Timer firing is **not** implemented yet — timers are recorded by the engine
-but the sweep that fires them is a separate landing. Same for the
-ack-with-outcome plumbing that lets the bus drive job advances. For now,
-``advance(id, event, data)`` is invoked manually via the CLI.
+``handle_ack`` is called from :func:`eventstream.logic.events.ack` when a
+worker passes an ``outcome``. Stale acks (job has moved past the state it
+was in when the emit was made) are silent no-ops; double-acks find no map
+entry (because the first deleted it) and are likewise no-ops. The state
+check + single-use map entry together provide the idempotency the design
+calls for.
+
+``tick`` fires due timers — call it periodically (e.g.
+``eventstream jobs tick`` from cron, or wrap in a sweeper loop). When a
+timer fires, the engine processes ``timer["event"]`` against the job's
+current state, just like any other external event.
 
 Functions in this module are registered as meander HTTP handlers. Do **not**
 add ``from __future__ import annotations`` — see ``logic/streams.py`` for
@@ -32,6 +46,9 @@ from eventstream.logic import backend, engine, events, workflows
 from eventstream.logic.exceptions import EventStreamError
 
 _INDEX = "eventstream:jobs"
+_TIMERS = "eventstream:job_timers"
+
+EMIT_MAP_TTL_SECONDS = 24 * 60 * 60  # 1 day; old entries auto-evict
 
 
 class JobNotFound(EventStreamError):
@@ -48,6 +65,10 @@ def _job_key(job_id: str) -> str:
 
 def _history_key(job_id: str) -> str:
     return f"eventstream:job:{job_id}:history"
+
+
+def _emitted_key(event_id: str) -> str:
+    return f"eventstream:emitted:{event_id}"
 
 
 def _new_job_id() -> str:
@@ -70,8 +91,6 @@ async def create(
     job_id = _new_job_id()
     recorder = engine.Recorder(job_id)
 
-    # The job starts in `initial_state`. Run its enter actions, then if the
-    # last enter action emitted, cascade through the engine on that carry.
     enter_refs = ast["states"][initial_state].get("enter", [])
     carry = None
     for ref in enter_refs:
@@ -176,6 +195,67 @@ async def cancel(job_id: str) -> None:
     )
 
 
+async def handle_ack(event_id: str, outcome: str, data: dict) -> dict | None:
+    """Route an ack-with-outcome through the engine, if applicable.
+
+    Looks up the emit→job map written at publish time. If found and the job
+    is still in the state recorded at emit time, advances the job with
+    ``outcome``. Stale entries (job already moved on), missing entries
+    (double-ack or wrong event id), and non-running jobs are silent no-ops
+    — the bus side still XACKs the underlying event in every case.
+    Returns the updated job dict if an advance happened, else ``None``.
+    """
+    client = backend.client()
+    raw = await client.hgetall(_emitted_key(event_id))
+    if not raw:
+        return None
+
+    # Single-use: delete the map entry immediately so a redelivered ack
+    # finds nothing on its second arrival.
+    await client.delete(_emitted_key(event_id))
+
+    try:
+        job = await get(raw["job_id"])
+    except JobNotFound:
+        return None
+
+    if job["state"] != raw["state"]:
+        return None  # stale: the FSM moved on
+    if job["status"] != "running":
+        return None
+
+    return await advance(raw["job_id"], outcome, data)
+
+
+async def tick() -> dict:
+    """Sweep due timers; fire each as an event against its job.
+
+    Returns ``{fired: N, dropped: M}`` where ``dropped`` counts timers whose
+    job no longer exists or is no longer running (and the timer is removed).
+    Call periodically — e.g. ``eventstream jobs tick`` from cron, or wrap
+    in a sweeper loop.
+    """
+    client = backend.client()
+    now = int(time.time())
+    due = await client.zrangebyscore(_TIMERS, 0, now)
+    fired = 0
+    dropped = 0
+    for member in due:
+        try:
+            entry = json.loads(member)
+        except json.JSONDecodeError:
+            await client.zrem(_TIMERS, member)
+            dropped += 1
+            continue
+        try:
+            await advance(entry["job_id"], entry["event"], {})
+            fired += 1
+        except (JobNotFound, JobNotRunning):
+            dropped += 1
+        await client.zrem(_TIMERS, member)
+    return {"fired": fired, "dropped": dropped}
+
+
 async def _persist_create(
     job_id, workflow_name, version, state, context, status, now, recorder
 ):
@@ -193,7 +273,7 @@ async def _persist_create(
         },
     )
     await client.sadd(_INDEX, job_id)
-    await _flush_side_effects(client, job_id, recorder, now)
+    await _flush_side_effects(client, job_id, recorder, now, current_state=state)
 
 
 async def _persist_update(job_id, state, context, status, recorder):
@@ -208,13 +288,33 @@ async def _persist_update(job_id, state, context, status, recorder):
             "updated_at": str(now),
         },
     )
-    await _flush_side_effects(client, job_id, recorder, now)
+    await _flush_side_effects(client, job_id, recorder, now, current_state=state)
 
 
-async def _flush_side_effects(client, job_id, recorder, now):
-    """Publish recorded emits and append history. Timers are not yet fired."""
+async def _flush_side_effects(client, job_id, recorder, now, *, current_state):
+    """Publish recorded emits, append history, register routing map, schedule timers."""
     for trans in recorder.transitions:
         await client.rpush(_history_key(job_id), json.dumps({**trans, "ts": now}))
+
     for emit in recorder.emits:
         payload = {"_event": emit["event_type"], "_job": job_id, **emit["payload"]}
-        await events.publish(emit["stream"], payload)
+        event_id = await events.publish(emit["stream"], payload)
+        # Register the emit → job map so a worker's ack-with-outcome can
+        # route back to this job in this state. Single-use, with a TTL so
+        # never-acked emits don't accumulate forever.
+        await client.hset(
+            _emitted_key(event_id),
+            mapping={"job_id": job_id, "state": current_state},
+        )
+        await client.expire(_emitted_key(event_id), EMIT_MAP_TTL_SECONDS)
+
+    for timer in recorder.timers:
+        fire_at = now + int(timer["delay_seconds"])
+        member = json.dumps(
+            {
+                "job_id": job_id,
+                "event": timer["event"],
+                "nonce": secrets.token_hex(4),
+            }
+        )
+        await client.zadd(_TIMERS, {member: fire_at})

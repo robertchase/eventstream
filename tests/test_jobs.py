@@ -30,6 +30,21 @@ STATE done   TERMINAL
 STATE failed TERMINAL
 """
 
+_WF_WITH_TIMER = """\
+NAME    timed-flow
+INITIAL waiting
+
+ACTION arm
+  TIMER 1s timeout
+
+STATE waiting
+  ENTER
+    ACTION arm
+  EVENT timeout end
+
+STATE end TERMINAL
+"""
+
 
 async def _register() -> None:
     await workflows.register(_WF_SOURCE)
@@ -169,3 +184,101 @@ async def test_worker_can_consume_what_create_emitted() -> None:
     assert event["payload"]["_event"] == "greet"
     assert event["payload"]["_job"] == job["id"]
     assert event["payload"]["who"] == "alice"
+
+
+# ---- ack-with-outcome routing --------------------------------------------
+
+
+async def test_ack_with_outcome_advances_the_job() -> None:
+    await _register()
+    await subscriptions.create("worker", "outbound")
+    job = await jobs.create("test-flow", {"target": "alice"})
+    event = await events.pull("worker", wait=0)
+    advanced = await events.ack("worker", event["id"], outcome="success", data={})
+    assert advanced is not None
+    assert advanced["id"] == job["id"]
+    assert advanced["state"] == "done"
+    assert advanced["status"] == "terminal"
+    # And the underlying bus event is XACKed:
+    assert await subscriptions.pending("worker") == []
+
+
+async def test_ack_without_outcome_does_not_advance() -> None:
+    await _register()
+    await subscriptions.create("worker", "outbound")
+    job = await jobs.create("test-flow", {"target": "alice"})
+    event = await events.pull("worker", wait=0)
+    result = await events.ack("worker", event["id"])  # bare ack
+    assert result is None
+    # Job hasn't moved.
+    fresh = await jobs.get(job["id"])
+    assert fresh["state"] == "waiting"
+
+
+async def test_double_ack_with_outcome_is_idempotent() -> None:
+    """Second ack-with-outcome finds the map entry gone; no double advance."""
+    await _register()
+    await subscriptions.create("worker", "outbound")
+    await jobs.create("test-flow", {"target": "alice"})
+    event = await events.pull("worker", wait=0)
+    first = await events.ack("worker", event["id"], outcome="success", data={})
+    assert first["state"] == "done"
+    # Reset the job to "waiting" to ensure a second ack would NOT advance.
+    # (Since the job is terminal anyway, advance would also raise, but the
+    # handle_ack path silently no-ops on missing map entry — that's what
+    # we want to verify.)
+    second = await events.ack("worker", event["id"], outcome="success", data={})
+    assert second is None
+
+
+async def test_stale_ack_does_not_advance() -> None:
+    """Ack arrives after the job has already moved past the emit state."""
+    await _register()
+    await subscriptions.create("worker", "outbound")
+    job = await jobs.create("test-flow", {"target": "alice"})
+    event = await events.pull("worker", wait=0)
+    # Move the job past `waiting` via a separate path (the error→default).
+    await jobs.advance(job["id"], "error", {})
+    fresh = await jobs.get(job["id"])
+    assert fresh["state"] == "failed"
+    # Now the worker's stale ack arrives; state no longer matches.
+    result = await events.ack("worker", event["id"], outcome="success", data={})
+    assert result is None
+    # Job stayed at `failed`.
+    final = await jobs.get(job["id"])
+    assert final["state"] == "failed"
+
+
+# ---- timers --------------------------------------------------------------
+
+
+async def test_tick_fires_due_timers() -> None:
+    await workflows.register(_WF_WITH_TIMER)
+    job = await jobs.create("timed-flow")
+    assert job["state"] == "waiting"
+    # Timer was scheduled with delay 1s; without waiting it shouldn't fire.
+    result = await jobs.tick()
+    assert result == {"fired": 0, "dropped": 0}
+    assert (await jobs.get(job["id"]))["state"] == "waiting"
+
+    # Sleep past the delay, then sweep.
+    import asyncio
+
+    await asyncio.sleep(1.2)
+    result = await jobs.tick()
+    assert result["fired"] == 1
+    assert (await jobs.get(job["id"]))["state"] == "end"
+
+
+async def test_tick_drops_timers_for_terminal_jobs() -> None:
+    await workflows.register(_WF_WITH_TIMER)
+    job = await jobs.create("timed-flow")
+    # Force the job past the state so the timer is stale when it fires.
+    await jobs.advance(job["id"], "timeout", {})
+    assert (await jobs.get(job["id"]))["state"] == "end"
+    import asyncio
+
+    await asyncio.sleep(1.2)
+    result = await jobs.tick()
+    assert result["fired"] == 0
+    assert result["dropped"] == 1

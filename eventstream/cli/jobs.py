@@ -100,3 +100,11 @@ async def advance(job_id: str, event_name: str, data: str | None) -> None:
 async def cancel(job_id: str) -> None:
     """Cancel a running JOB_ID."""
     await jobs.cancel(job_id)
+
+
+@jobs_group.command()
+@coroutine
+async def tick() -> None:
+    """Fire any due timers (single sweep)."""
+    result = await jobs.tick()
+    click.echo(f"fired: {result['fired']}\tdropped: {result['dropped']}")

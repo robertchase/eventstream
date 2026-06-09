@@ -8,6 +8,12 @@ and the redelivery cap are per-subscription (see
 ``subscriptions.config``); ``CONFIG`` provides the defaults a sub inherits
 when it doesn't override.
 
+``ack`` accepts an optional ``outcome`` (plus ``data``) that drives the
+jobs engine: when a worker reports a result, the bus looks up the
+job-routing map written at emit time and calls :func:`jobs.handle_ack`. A
+bare ack (no outcome) preserves today's behavior. The jobs module is
+imported lazily inside ``ack`` to avoid a circular import.
+
 These functions are CLI-only today but could be promoted to meander handlers
 later. Do **not** add ``from __future__ import annotations`` — see
 ``logic/streams.py`` for why.
@@ -74,10 +80,31 @@ async def pull(subscription: str, *, wait: float | None = None) -> dict | None:
     return _to_event(event_id, fields, delivery_count=1)
 
 
-async def ack(subscription: str, event_id: str) -> None:
-    """Acknowledge ``event_id``, releasing its lease and advancing the cursor."""
+async def ack(
+    subscription: str,
+    event_id: str,
+    *,
+    outcome: str | None = None,
+    data: dict | None = None,
+) -> dict | None:
+    """Acknowledge ``event_id``, releasing its lease and advancing the cursor.
+
+    With ``outcome`` set, also drive the workflow engine: look up the
+    emit→job map written at publish time and call :func:`jobs.handle_ack`.
+    Returns the updated job dict if a job advance happened, or ``None``.
+
+    A bare ack (no ``outcome``) behaves exactly as before: lease released,
+    cursor advanced, no jobs side effect.
+    """
+    advanced = None
+    if outcome is not None:
+        # Lazy import to avoid the events ↔ jobs circular dependency.
+        from eventstream.logic import jobs as jobs_mod
+
+        advanced = await jobs_mod.handle_ack(event_id, outcome, data or {})
     stream = await subscriptions.stream_of(subscription)
     await backend.client().xack(streams.key(stream), subscription, event_id)
+    return advanced
 
 
 async def _try_reclaim(
