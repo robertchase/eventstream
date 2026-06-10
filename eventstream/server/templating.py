@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -15,6 +16,16 @@ _env = Environment(
     trim_blocks=True,
     lstrip_blocks=True,
 )
+
+
+def _format_ts(value) -> str:
+    """Jinja filter: render a unix timestamp as an ISO8601 UTC string."""
+    if not value:
+        return "—"
+    return datetime.fromtimestamp(int(value), tz=UTC).isoformat()
+
+
+_env.filters["ts"] = _format_ts
 
 
 def render(name: str, **context: object) -> str:

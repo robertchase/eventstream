@@ -1,0 +1,20 @@
+<div id="content" hx-get="/workflows" hx-trigger="every 5s" hx-swap="outerHTML">
+<h1>workflows</h1>
+<section>
+{% if workflows %}
+<table>
+<thead><tr><th>name</th><th>latest version</th></tr></thead>
+<tbody>
+{% for w in workflows %}
+<tr>
+<td><a href="/workflows/{{ w.name }}"><code>{{ w.name }}</code></a></td>
+<td>v{{ w.latest_version or "-" }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">no workflows registered</p>
+{% endif %}
+</section>
+</div>

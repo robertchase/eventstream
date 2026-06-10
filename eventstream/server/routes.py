@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import meander
 
-from eventstream.logic import dlq, streams, subscriptions
+from eventstream.logic import dlq, jobs, streams, subscriptions, workflows
 from eventstream.server import web
 from eventstream.server.hooks import hx_check
 from eventstream.server.static import serve_static
@@ -26,7 +26,7 @@ from eventstream.server.static import serve_static
 
 def register(server: meander.server.Server) -> None:
     """Add every eventstream route to ``server``."""
-    # JSON API — handlers are the logic functions themselves.
+    # JSON API — bus.
     server.add_route(r"/v1/streams$", streams.list_)
     server.add_route(r"/v1/streams/([^/]+)$", streams.show)
     server.add_route(r"/v1/streams/([^/]+)/events$", streams.peek)
@@ -35,12 +35,24 @@ def register(server: meander.server.Server) -> None:
     server.add_route(r"/v1/subscriptions/([^/]+)/pending$", subscriptions.pending)
     server.add_route(r"/v1/subscriptions/([^/]+)/dlq$", dlq.peek)
 
+    # JSON API — workflows & jobs.
+    server.add_route(r"/v1/workflows$", workflows.list_)
+    server.add_route(r"/v1/workflows/([^/]+)$", workflows.get)
+    server.add_route(r"/v1/workflows/([^/]+)/versions$", workflows.versions)
+    server.add_route(r"/v1/jobs$", jobs.list_)
+    server.add_route(r"/v1/jobs/([^/]+)$", jobs.get)
+    server.add_route(r"/v1/jobs/([^/]+)/history$", jobs.history)
+
     # HTML admin — fragment-or-page via the HX-Request header.
     server.add_route(r"/$", web.index, before=hx_check)
     server.add_route(r"/streams/([^/]+)$", web.stream_detail, before=hx_check)
     server.add_route(
         r"/subscriptions/([^/]+)$", web.subscription_detail, before=hx_check
     )
+    server.add_route(r"/workflows$", web.workflow_list, before=hx_check)
+    server.add_route(r"/workflows/([^/]+)$", web.workflow_detail, before=hx_check)
+    server.add_route(r"/jobs$", web.job_list, before=hx_check)
+    server.add_route(r"/jobs/([^/]+)$", web.job_detail, before=hx_check)
 
     # Static — CSS, vendored htmx.
     server.add_route(r"/static/(.+)$", serve_static)

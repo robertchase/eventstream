@@ -11,7 +11,7 @@ handlers and the future import disables meander's type coercion. See
 
 import meander
 
-from eventstream.logic import dlq, streams, subscriptions
+from eventstream.logic import dlq, jobs, streams, subscriptions, workflows
 from eventstream.server.templating import render_page
 
 
@@ -48,5 +48,69 @@ async def subscription_detail(name: str, is_hx: bool = False) -> meander.HTMLRes
         info=await subscriptions.show(name),
         pending=await subscriptions.pending(name, count=10),
         dead=await dlq.peek(name, count=10),
+    )
+    return meander.HTMLResponse(content=body)
+
+
+async def workflow_list(is_hx: bool = False) -> meander.HTMLResponse:
+    """List of registered workflows with their latest version."""
+    body = render_page(
+        "workflows.html",
+        fragment=is_hx,
+        title="workflows",
+        workflows=await workflows.list_(),
+    )
+    return meander.HTMLResponse(content=body)
+
+
+async def workflow_detail(
+    name: str, is_hx: bool = False, version: int | None = None
+) -> meander.HTMLResponse:
+    """Workflow detail: definition + version picker + jobs running this workflow."""
+    wf = await workflows.get(name, version=version)
+    body = render_page(
+        "workflow.html",
+        fragment=is_hx,
+        title=f"workflow {name}",
+        wf=wf,
+        requested_version=version,
+        all_versions=await workflows.versions(name),
+        jobs=await jobs.list_(workflow=name),
+    )
+    return meander.HTMLResponse(content=body)
+
+
+async def job_list(
+    is_hx: bool = False,
+    workflow: str | None = None,
+    status: str | None = None,
+) -> meander.HTMLResponse:
+    """Job list with workflow + status filters."""
+    qs_parts = []
+    if workflow:
+        qs_parts.append(f"workflow={workflow}")
+    if status:
+        qs_parts.append(f"status={status}")
+    qs = "?" + "&".join(qs_parts) if qs_parts else ""
+    body = render_page(
+        "jobs.html",
+        fragment=is_hx,
+        title="jobs",
+        jobs=await jobs.list_(workflow=workflow, status=status),
+        workflow=workflow,
+        status=status,
+        qs=qs,
+    )
+    return meander.HTMLResponse(content=body)
+
+
+async def job_detail(job_id: str, is_hx: bool = False) -> meander.HTMLResponse:
+    """Job detail: state + context + transition history."""
+    body = render_page(
+        "job.html",
+        fragment=is_hx,
+        title=f"job {job_id}",
+        job=await jobs.get(job_id),
+        history=await jobs.history(job_id),
     )
     return meander.HTMLResponse(content=body)

@@ -1,0 +1,46 @@
+<div id="content" hx-get="/jobs/{{ job.id }}" hx-trigger="every 3s" hx-swap="outerHTML">
+<h1>job <code>{{ job.id }}</code></h1>
+<p class="muted">
+workflow <a href="/workflows/{{ job.workflow }}"><code>{{ job.workflow }}</code></a> v{{ job.version }}
+</p>
+
+<section>
+<h2>info</h2>
+<dl class="stats">
+<dt>state</dt><dd><code>{{ job.state }}</code></dd>
+<dt>status</dt><dd>{{ job.status }}</dd>
+<dt>created</dt><dd class="muted">{{ job.created_at | ts }}</dd>
+<dt>updated</dt><dd class="muted">{{ job.updated_at | ts }}</dd>
+</dl>
+</section>
+
+<section>
+<h2>context</h2>
+{% if job.context %}
+<pre><code>{{ job.context | tojson(indent=2) }}</code></pre>
+{% else %}
+<p class="empty">empty</p>
+{% endif %}
+</section>
+
+<section>
+<h2>history ({{ history | length }})</h2>
+{% if history %}
+<table>
+<thead><tr><th>ts</th><th>from</th><th>event</th><th>to</th></tr></thead>
+<tbody>
+{% for h in history %}
+<tr>
+<td class="muted">{{ h.ts | ts }}</td>
+<td><code>{{ h.from }}</code></td>
+<td><code>{{ h.event }}</code></td>
+<td><code>{{ h.to }}</code></td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">no transitions yet</p>
+{% endif %}
+</section>
+</div>

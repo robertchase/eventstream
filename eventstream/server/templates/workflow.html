@@ -1,0 +1,88 @@
+<div id="content"
+  hx-get="/workflows/{{ wf.name }}{% if requested_version %}?version={{ requested_version }}{% endif %}"
+  hx-trigger="every 5s" hx-swap="outerHTML">
+<h1>workflow <code>{{ wf.name }}</code> <span class="muted">v{{ wf.version }}</span></h1>
+
+<section>
+<h2>info</h2>
+<dl class="stats">
+{% if wf.ast.description %}
+<dt>description</dt><dd>{{ wf.ast.description }}</dd>
+{% endif %}
+<dt>initial</dt><dd><code>{{ wf.ast.initial }}</code></dd>
+<dt>versions</dt><dd>
+{% for v in all_versions %}
+  {% if v == wf.version %}
+    <strong>v{{ v }}</strong>
+  {% else %}
+    <a href="/workflows/{{ wf.name }}?version={{ v }}">v{{ v }}</a>
+  {% endif %}
+  {% if not loop.last %}, {% endif %}
+{% endfor %}
+</dd>
+</dl>
+</section>
+
+<section>
+<h2>states ({{ wf.ast.states | length }})</h2>
+<table>
+<thead><tr><th>name</th><th>shape</th></tr></thead>
+<tbody>
+{% for name, state in wf.ast.states.items() %}
+<tr>
+<td><code>{{ name }}</code></td>
+<td class="muted">
+{% if state.terminal %}terminal{% else %}{{ state.events | length }} event(s){% if state.enter %} • enter{% endif %}{% if state.exit %} • exit{% endif %}{% endif %}
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>actions ({{ wf.ast.actions | length }})</h2>
+<table>
+<thead><tr><th>name</th><th>type</th><th>detail</th></tr></thead>
+<tbody>
+{% for name, action in wf.ast.actions.items() %}
+<tr>
+<td><code>{{ name }}</code></td>
+<td>{{ action.type }}</td>
+<td class="muted">
+{% if action.type == "emit" %}{{ action.stream }} → {{ action.event }}{% endif %}
+{% if action.type == "timer" %}{{ action.delay_seconds }}s → {{ action.event }}{% endif %}
+{% if action.type == "set" %}{{ action.fields | length }} field(s){% endif %}
+</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>jobs ({{ jobs | length }})</h2>
+{% if jobs %}
+<table>
+<thead><tr><th>id</th><th>state</th><th>status</th><th>updated</th></tr></thead>
+<tbody>
+{% for j in jobs %}
+<tr>
+<td><a href="/jobs/{{ j.id }}"><code>{{ j.id }}</code></a></td>
+<td><code>{{ j.state }}</code></td>
+<td>{{ j.status }}</td>
+<td class="muted">{{ j.updated_at | ts }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p class="empty">no jobs for this workflow</p>
+{% endif %}
+</section>
+
+<section>
+<h2>source</h2>
+<pre><code>{{ wf.source }}</code></pre>
+</section>
+</div>

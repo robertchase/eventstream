@@ -15,12 +15,26 @@ header {
   padding: 0.5rem 1rem;
 }
 
+nav {
+  display: flex;
+  gap: 1.25rem;
+  align-items: baseline;
+}
+
+nav a {
+  text-decoration: none;
+  color: #555;
+  font-size: 0.875rem;
+}
+
+nav a:hover { color: #0366d6; }
+
 nav a.brand {
   font-weight: 600;
   font-size: 1rem;
-  text-decoration: none;
   color: #222;
   letter-spacing: 0.02em;
+  margin-right: 0.5rem;
 }
 
 main {
@@ -96,3 +110,20 @@ a:hover { text-decoration: underline; }
 
 .empty { color: #999; font-style: italic; }
 .muted { color: #888; font-size: 0.9em; }
+
+pre {
+  background: #f6f6f6;
+  border: 1px solid #ececec;
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-size: 0.825em;
+  line-height: 1.45;
+  margin: 0;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 1em;
+}
