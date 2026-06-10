@@ -127,3 +127,20 @@ pre code {
   padding: 0;
   font-size: 1em;
 }
+
+.columns {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.columns > * {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+
+.nomnoml-out svg {
+  max-width: 100%;
+  height: auto;
+}

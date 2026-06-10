@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "eventstream",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "-m", "eventstream.server"],
+      "port": 8080,
+      "autoPort": false
+    }
+  ]
+}

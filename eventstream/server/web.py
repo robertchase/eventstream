@@ -12,6 +12,7 @@ handlers and the future import disables meander's type coercion. See
 import meander
 
 from eventstream.logic import dlq, jobs, streams, subscriptions, workflows
+from eventstream.server import diagram
 from eventstream.server.templating import render_page
 
 
@@ -76,6 +77,7 @@ async def workflow_detail(
         requested_version=version,
         all_versions=await workflows.versions(name),
         jobs=await jobs.list_(workflow=name),
+        diagram=diagram.to_nomnoml(wf["ast"]),
     )
     return meander.HTMLResponse(content=body)
 
@@ -105,12 +107,16 @@ async def job_list(
 
 
 async def job_detail(job_id: str, is_hx: bool = False) -> meander.HTMLResponse:
-    """Job detail: state + context + transition history."""
+    """Job detail: state + context + transition history + position diagram."""
+    job = await jobs.get(job_id)
+    wf = await workflows.get(job["workflow"], version=job["version"])
+    current = job["state"] if job["status"] == "running" else None
     body = render_page(
         "job.html",
         fragment=is_hx,
         title=f"job {job_id}",
-        job=await jobs.get(job_id),
+        job=job,
         history=await jobs.history(job_id),
+        diagram=diagram.to_nomnoml(wf["ast"], current_state=current),
     )
     return meander.HTMLResponse(content=body)

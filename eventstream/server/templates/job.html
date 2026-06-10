@@ -15,6 +15,13 @@ workflow <a href="/workflows/{{ job.workflow }}"><code>{{ job.workflow }}</code>
 </section>
 
 <section>
+<h2>diagram</h2>
+<div class="diagram">
+<pre class="nomnoml-source" hidden>{{ diagram }}</pre>
+</div>
+</section>
+
+<section>
 <h2>context</h2>
 {% if job.context %}
 <pre><code>{{ job.context | tojson(indent=2) }}</code></pre>
