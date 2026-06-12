@@ -103,6 +103,15 @@ async def cancel(job_id: str) -> None:
 
 
 @jobs_group.command()
+@click.argument("job_id")
+@click.option("--force", is_flag=True, help="Delete even if the job is running.")
+@coroutine
+async def delete(job_id: str, force: bool) -> None:
+    """Delete JOB_ID: its state, history, and pending timers."""
+    await jobs.delete(job_id, force=force)
+
+
+@jobs_group.command()
 @coroutine
 async def tick() -> None:
     """Fire any due timers (single sweep)."""

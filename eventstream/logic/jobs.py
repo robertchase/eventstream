@@ -59,6 +59,10 @@ class JobNotRunning(EventStreamError):
     """A mutation was attempted on a job that is no longer running."""
 
 
+class JobRunning(EventStreamError):
+    """A destructive operation was refused because the job is still running."""
+
+
 def _job_key(job_id: str) -> str:
     return f"eventstream:job:{job_id}"
 
@@ -193,6 +197,30 @@ async def cancel(job_id: str) -> None:
         _job_key(job_id),
         mapping={"status": "cancelled", "updated_at": str(now)},
     )
+
+
+async def delete(job_id: str, *, force: bool = False) -> None:
+    """Remove a job: its state, history, and any pending timers.
+
+    Running jobs are refused unless ``force`` — cancel first, or pass
+    ``force=True`` to delete regardless. Emit-routing map entries are left
+    to their TTL; an ack arriving for a deleted job is already a silent
+    no-op in :func:`handle_ack`.
+    """
+    job = await get(job_id)
+    if job["status"] == "running" and not force:
+        raise JobRunning(f"job {job_id} is running; cancel it first or use force")
+    client = backend.client()
+    await client.delete(_job_key(job_id))
+    await client.delete(_history_key(job_id))
+    await client.srem(_INDEX, job_id)
+    for member in await client.zrange(_TIMERS, 0, -1):
+        try:
+            entry = json.loads(member)
+        except json.JSONDecodeError:
+            continue
+        if entry.get("job_id") == job_id:
+            await client.zrem(_TIMERS, member)
 
 
 async def handle_ack(event_id: str, outcome: str, data: dict) -> dict | None:

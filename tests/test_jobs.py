@@ -162,6 +162,60 @@ async def test_cancel_marks_running_job() -> None:
         await jobs.advance(job["id"], "success", {})
 
 
+async def test_delete_removes_finished_job() -> None:
+    await _register()
+    job = await jobs.create("test-flow", {"target": "alice"})
+    await jobs.advance(job["id"], "success", {})
+    await jobs.delete(job["id"])
+    with pytest.raises(jobs.JobNotFound):
+        await jobs.get(job["id"])
+    with pytest.raises(jobs.JobNotFound):
+        await jobs.history(job["id"])
+    assert await jobs.list_() == []
+
+
+async def test_delete_running_job_refused_without_force() -> None:
+    await _register()
+    job = await jobs.create("test-flow", {"target": "alice"})
+    with pytest.raises(jobs.JobRunning):
+        await jobs.delete(job["id"])
+    # Still there.
+    assert (await jobs.get(job["id"]))["status"] == "running"
+
+
+async def test_delete_running_job_with_force() -> None:
+    await _register()
+    job = await jobs.create("test-flow", {"target": "alice"})
+    await jobs.delete(job["id"], force=True)
+    with pytest.raises(jobs.JobNotFound):
+        await jobs.get(job["id"])
+
+
+async def test_delete_cancelled_job_allowed() -> None:
+    await _register()
+    job = await jobs.create("test-flow", {"target": "alice"})
+    await jobs.cancel(job["id"])
+    await jobs.delete(job["id"])
+    with pytest.raises(jobs.JobNotFound):
+        await jobs.get(job["id"])
+
+
+async def test_delete_unknown_job_raises() -> None:
+    with pytest.raises(jobs.JobNotFound):
+        await jobs.delete("job_ghost")
+
+
+async def test_delete_cleans_pending_timers() -> None:
+    await workflows.register(_WF_WITH_TIMER)
+    job = await jobs.create("timed-flow")
+    await jobs.delete(job["id"], force=True)
+    # The timer must not fire (and not even count as dropped — it's gone).
+    import asyncio
+
+    await asyncio.sleep(1.2)
+    assert await jobs.tick() == {"fired": 0, "dropped": 0}
+
+
 async def test_cancel_terminal_is_noop() -> None:
     await _register()
     job = await jobs.create("test-flow", {"target": "alice"})
