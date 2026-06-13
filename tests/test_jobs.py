@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from eventstream.logic import events, jobs, streams, subscriptions, workflows
+from eventstream import config as CONFIG
+from eventstream.logic import dlq, events, jobs, streams, subscriptions, workflows
 
 _WF_SOURCE = """\
 NAME    test-flow
@@ -43,6 +46,25 @@ STATE waiting
   EVENT timeout end
 
 STATE end TERMINAL
+"""
+
+_WF_WITH_STEP = """\
+NAME    step-flow
+INITIAL working
+
+ACTION do-step
+  EMIT tasks run
+  PAYLOAD job $job.id
+
+DEFAULT error failed
+
+STATE working
+  ENTER
+    ACTION do-step
+  EVENT done finished
+
+STATE finished TERMINAL
+STATE failed   TERMINAL
 """
 
 
@@ -210,10 +232,94 @@ async def test_delete_cleans_pending_timers() -> None:
     job = await jobs.create("timed-flow")
     await jobs.delete(job["id"], force=True)
     # The timer must not fire (and not even count as dropped — it's gone).
-    import asyncio
 
     await asyncio.sleep(1.2)
     assert await jobs.tick() == {"fired": 0, "dropped": 0}
+
+
+# ---- DLQ → job error wiring ------------------------------------------------
+
+
+async def test_dlqd_step_fails_the_job(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A step event that exhausts redelivery moves to the DLQ and the job
+    takes its DEFAULT error transition instead of hanging."""
+    monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
+    await workflows.register(_WF_WITH_STEP)
+    await subscriptions.create("runner", "tasks", max_deliveries=1)
+    job = await jobs.create("step-flow")
+    assert job["state"] == "working"
+
+    await events.pull("runner", wait=0)  # delivery 1
+    await asyncio.sleep(0.1)
+    assert await events.pull("runner", wait=0) is None  # delivery 2 → DLQ → error
+
+    after = await jobs.get(job["id"])
+    assert after["state"] == "failed"
+    assert after["status"] == "terminal"
+    # The dead event is also durably in the DLQ.
+    assert len(await dlq.peek("runner")) == 1
+
+
+async def test_dead_event_for_finished_job_is_noop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the job already moved past the emitting state, the DLQ notice is a
+    no-op (the job is not advanced again)."""
+    monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
+    await workflows.register(_WF_WITH_STEP)
+    await subscriptions.create("runner", "tasks", max_deliveries=1)
+    job = await jobs.create("step-flow")
+
+    await events.pull("runner", wait=0)  # delivery 1
+    await jobs.advance(job["id"], "done")  # job → finished (terminal)
+    await asyncio.sleep(0.1)
+    await events.pull("runner", wait=0)  # delivery 2 → DLQ → handle_dead no-ops
+
+    after = await jobs.get(job["id"])
+    assert after["state"] == "finished"  # unchanged by the dead notice
+
+
+# ---- sweeper ---------------------------------------------------------------
+
+
+async def test_sweep_forever_runs_bounded_iterations(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    async def fake_tick() -> dict:
+        calls.append(1)
+        return {"fired": 0, "dropped": 0}
+
+    monkeypatch.setattr(jobs, "tick", fake_tick)
+    await jobs.sweep_forever(0, iterations=3)
+    assert len(calls) == 3
+
+
+async def test_sweep_forever_survives_a_failing_tick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    async def flaky_tick() -> dict:
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("boom")
+        return {"fired": 0, "dropped": 0}
+
+    monkeypatch.setattr(jobs, "tick", flaky_tick)
+    await jobs.sweep_forever(0, iterations=2)
+    assert len(calls) == 2  # the loop kept going after the error
+
+
+async def test_sweep_forever_fires_a_real_timer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await workflows.register(_WF_WITH_TIMER)
+    job = await jobs.create("timed-flow")
+    await asyncio.sleep(1.2)
+    await jobs.sweep_forever(0, iterations=1)
+    assert (await jobs.get(job["id"]))["state"] == "end"
 
 
 async def test_cancel_terminal_is_noop() -> None:
@@ -316,7 +422,6 @@ async def test_tick_fires_due_timers() -> None:
     assert (await jobs.get(job["id"]))["state"] == "waiting"
 
     # Sleep past the delay, then sweep.
-    import asyncio
 
     await asyncio.sleep(1.2)
     result = await jobs.tick()
@@ -330,7 +435,6 @@ async def test_tick_drops_timers_for_terminal_jobs() -> None:
     # Force the job past the state so the timer is stale when it fires.
     await jobs.advance(job["id"], "timeout", {})
     assert (await jobs.get(job["id"]))["state"] == "end"
-    import asyncio
 
     await asyncio.sleep(1.2)
     result = await jobs.tick()

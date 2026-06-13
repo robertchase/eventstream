@@ -38,7 +38,9 @@ add ``from __future__ import annotations`` — see ``logic/streams.py`` for
 why.
 """
 
+import asyncio
 import json
+import logging
 import secrets
 import time
 
@@ -47,6 +49,8 @@ from eventstream.logic.exceptions import EventStreamError
 
 _INDEX = "eventstream:jobs"
 _TIMERS = "eventstream:job_timers"
+
+_sweep_log = logging.getLogger("eventstream.jobs")
 
 EMIT_MAP_TTL_SECONDS = 24 * 60 * 60  # 1 day; old entries auto-evict
 
@@ -223,36 +227,78 @@ async def delete(job_id: str, *, force: bool = False) -> None:
             await client.zrem(_TIMERS, member)
 
 
-async def handle_ack(event_id: str, outcome: str, data: dict) -> dict | None:
-    """Route an ack-with-outcome through the engine, if applicable.
+async def _route(event_id: str, event_name: str, data: dict) -> dict | None:
+    """Route an emitted event back to its job and advance it.
 
     Looks up the emit→job map written at publish time. If found and the job
-    is still in the state recorded at emit time, advances the job with
-    ``outcome``. Stale entries (job already moved on), missing entries
-    (double-ack or wrong event id), and non-running jobs are silent no-ops
-    — the bus side still XACKs the underlying event in every case.
+    is still in the state recorded at emit time (and still running), advances
+    it with ``event_name``. Missing entries (double-ack, expired, or not a
+    job emit), stale entries (the FSM moved on), and non-running jobs are all
+    silent no-ops. The map entry is single-use — deleted on the first match
+    so a redelivered ack or a late DLQ notice finds nothing.
     Returns the updated job dict if an advance happened, else ``None``.
     """
     client = backend.client()
     raw = await client.hgetall(_emitted_key(event_id))
     if not raw:
         return None
-
-    # Single-use: delete the map entry immediately so a redelivered ack
-    # finds nothing on its second arrival.
     await client.delete(_emitted_key(event_id))
 
     try:
         job = await get(raw["job_id"])
     except JobNotFound:
         return None
-
-    if job["state"] != raw["state"]:
-        return None  # stale: the FSM moved on
-    if job["status"] != "running":
+    if job["state"] != raw["state"] or job["status"] != "running":
         return None
 
-    return await advance(raw["job_id"], outcome, data)
+    try:
+        return await advance(raw["job_id"], event_name, data)
+    except JobNotRunning:
+        return None  # raced with another writer; nothing to do
+
+
+async def handle_ack(event_id: str, outcome: str, data: dict) -> dict | None:
+    """Route a worker's ack-with-outcome through the engine, if applicable.
+
+    Called from :func:`eventstream.logic.events.ack`. See :func:`_route` for
+    the routing and idempotency rules. The bus side still XACKs the
+    underlying event regardless of whether a job advance happened.
+    """
+    return await _route(event_id, outcome, data)
+
+
+async def handle_dead(event_id: str) -> dict | None:
+    """Route a DLQ'd job-step event into the job as an ``error`` event.
+
+    Called from :func:`eventstream.logic.dlq.move` when a step event exhausts
+    its redelivery cap. A workflow handles it like any other event — typically
+    ``DEFAULT error failed`` — so a poison step fails the job instead of
+    leaving it stuck forever. Non-job events and stale/finished jobs are
+    silent no-ops (see :func:`_route`).
+    """
+    return await _route(
+        event_id,
+        "error",
+        {"reason": "max_deliveries_exceeded", "event_id": event_id},
+    )
+
+
+async def sweep_forever(interval: float, *, iterations: int | None = None) -> None:
+    """Call :func:`tick` every ``interval`` seconds, forever.
+
+    The loop never raises: a failing tick is logged and the loop continues,
+    so this is safe to register as a meander background task (a raising task
+    would cancel the server's task group). ``iterations`` bounds the loop for
+    tests; ``None`` means run until cancelled.
+    """
+    count = 0
+    while iterations is None or count < iterations:
+        try:
+            await tick()
+        except Exception:  # noqa: BLE001 - a bad tick must not kill the sweeper
+            _sweep_log.exception("timer sweep failed; continuing")
+        count += 1
+        await asyncio.sleep(interval)
 
 
 async def tick() -> dict:

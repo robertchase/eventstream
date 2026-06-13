@@ -15,6 +15,7 @@ from __future__ import annotations
 import meander
 
 from eventstream import config as CONFIG
+from eventstream.logic import jobs
 from eventstream.logic.exceptions import (
     EventNotFound,
     EventStreamError,
@@ -63,6 +64,13 @@ def build(port: int | None = None) -> meander.server.Server:
 
 
 def run(*, port: int | None = None) -> None:
-    """Build the server and block, serving requests forever."""
+    """Build the server and block, serving requests forever.
+
+    When ``CONFIG.sweep_interval`` is positive, also runs the job-timer
+    sweeper as a meander background task so timers fire without a separate
+    ``eventstream jobs sweep`` process.
+    """
     build(port=port)
+    if CONFIG.sweep_interval > 0:
+        meander.add_task(lambda: jobs.sweep_forever(CONFIG.sweep_interval))
     meander.run()

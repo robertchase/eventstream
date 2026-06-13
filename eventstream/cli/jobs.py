@@ -117,3 +117,18 @@ async def tick() -> None:
     """Fire any due timers (single sweep)."""
     result = await jobs.tick()
     click.echo(f"fired: {result['fired']}\tdropped: {result['dropped']}")
+
+
+@jobs_group.command()
+@click.option(
+    "--interval",
+    type=float,
+    default=1.0,
+    show_default=True,
+    help="Seconds between sweeps.",
+)
+@coroutine
+async def sweep(interval: float) -> None:
+    """Fire due timers on a loop, forever (a standalone sweeper process)."""
+    click.echo(f"sweeping job timers every {interval}s (ctrl-c to stop)", err=True)
+    await jobs.sweep_forever(interval)

@@ -33,3 +33,11 @@ http_host: str = os.environ.get("EVENTSTREAM_HOST", "127.0.0.1")
 
 http_port: int = int(os.environ.get("EVENTSTREAM_PORT", "8080"))
 """Port the HTTP server binds to."""
+
+sweep_interval: float = float(os.environ.get("EVENTSTREAM_SWEEP_INTERVAL", "0"))
+"""How often (seconds) the HTTP server sweeps job timers in the background.
+
+``0`` (the default) disables the in-server sweeper — run ``eventstream jobs
+sweep`` as a standalone process instead. Set to a positive value to have the
+server fire due timers itself.
+"""
