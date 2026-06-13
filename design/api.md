@@ -48,11 +48,17 @@ Content-Type: application/json
 → 200 { "id": "evt_01J..." }
 ```
 
-`key` is optional. When present, events sharing a key are guaranteed to be
-delivered to the same worker in order. Per-key ordering applies to the order
-events reach the stream, not the order they were submitted — a synchronous
-publish wins over a sweep that completes later, even if the scheduled event
-was created first.
+`key` is optional. It is stored with the event and returned on pull, so
+consumers that care about grouping can read it.
+
+> **Not yet a delivery guarantee.** The intent is that events sharing a key
+> are delivered to the same worker in order, but the current Redis Streams
+> backend does not implement key affinity — a consumer group hands each
+> pending entry to whichever worker pulls next, regardless of key. So today
+> `key` is metadata only. Honoring same-key→same-worker ordering needs
+> key-hashed sub-streams (a partition count knob) and is deferred; see
+> "Per-key ordering" under *Deliberately out of scope*. With a single
+> worker per subscription, ordering is the stream's natural append order.
 
 When `deliver_at` (absolute ISO 8601 timestamp) is set and in the future,
 the event is queued for delivery at that time:
@@ -203,8 +209,11 @@ use case demands them.
   delivery. Scope (global for maintenance, per-stream, or per-subscription)
   TBD when the use case clarifies. Publish behavior while paused (accept
   and queue vs reject) is also TBD.
-- **Per-stream ordering.** Only per-key ordering is guaranteed. Global ordering
-  within a stream is not offered.
+- **Per-key ordering.** `key` is stored but not yet acted on (see *Publish*).
+  Honoring same-key→same-worker in-order delivery means hashing the key to
+  one of N sub-streams per subscription, which adds a partition-count knob.
+  Deferred until a consumer needs it. Global ordering within a stream is not
+  offered either way.
 - **Multi-tenancy.** Single global namespace. Add `/v1/tenants/{tenant}/...`
   prefix later if needed.
 - **Auth model.** TBD. Likely token-based with per-stream and per-subscription
