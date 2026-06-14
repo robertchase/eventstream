@@ -34,6 +34,14 @@ http_host: str = os.environ.get("EVENTSTREAM_HOST", "127.0.0.1")
 http_port: int = int(os.environ.get("EVENTSTREAM_PORT", "8080"))
 """Port the HTTP server binds to."""
 
+auth: bool = os.environ.get("EVENTSTREAM_AUTH", "0").lower() in ("1", "true", "yes")
+"""Whether the HTTP ``/v1/*`` API requires a bearer token.
+
+Off by default (behavior unchanged). When on, every ``/v1/*`` route is
+guarded by a scope check — see ``design/auth.md``. Manage keys with
+``eventstream key``.
+"""
+
 sweep_interval: float = float(os.environ.get("EVENTSTREAM_SWEEP_INTERVAL", "0"))
 """How often (seconds) the HTTP server sweeps job timers in the background.
 

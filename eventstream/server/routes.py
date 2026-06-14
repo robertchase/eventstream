@@ -18,30 +18,45 @@ from __future__ import annotations
 
 import meander
 
+from eventstream import config as CONFIG
 from eventstream.logic import dlq, jobs, streams, subscriptions, workflows
-from eventstream.server import web
+from eventstream.server import auth, web
 from eventstream.server.hooks import hx_check
 from eventstream.server.static import serve_static
 
 
 def register(server: meander.server.Server) -> None:
     """Add every eventstream route to ``server``."""
-    # JSON API — bus.
-    server.add_route(r"/v1/streams$", streams.list_)
-    server.add_route(r"/v1/streams/([^/]+)$", streams.show)
-    server.add_route(r"/v1/streams/([^/]+)/events$", streams.peek)
-    server.add_route(r"/v1/subscriptions$", subscriptions.list_)
-    server.add_route(r"/v1/subscriptions/([^/]+)$", subscriptions.show)
-    server.add_route(r"/v1/subscriptions/([^/]+)/pending$", subscriptions.pending)
-    server.add_route(r"/v1/subscriptions/([^/]+)/dlq$", dlq.peek)
+
+    def guard(scope: str):
+        """A scope before-hook when auth is on; nothing when it's off."""
+        return [auth.require(scope)] if CONFIG.auth else None
+
+    # JSON API — bus. All reads today; write/admin guards attach with the
+    # write-API work (see design/auth.md). Guarded only when EVENTSTREAM_AUTH.
+    server.add_route(r"/v1/streams$", streams.list_, before=guard("read"))
+    server.add_route(r"/v1/streams/([^/]+)$", streams.show, before=guard("read"))
+    server.add_route(r"/v1/streams/([^/]+)/events$", streams.peek, before=guard("read"))
+    server.add_route(r"/v1/subscriptions$", subscriptions.list_, before=guard("read"))
+    server.add_route(
+        r"/v1/subscriptions/([^/]+)$", subscriptions.show, before=guard("read")
+    )
+    server.add_route(
+        r"/v1/subscriptions/([^/]+)/pending$",
+        subscriptions.pending,
+        before=guard("read"),
+    )
+    server.add_route(r"/v1/subscriptions/([^/]+)/dlq$", dlq.peek, before=guard("read"))
 
     # JSON API — workflows & jobs.
-    server.add_route(r"/v1/workflows$", workflows.list_)
-    server.add_route(r"/v1/workflows/([^/]+)$", workflows.get)
-    server.add_route(r"/v1/workflows/([^/]+)/versions$", workflows.versions)
-    server.add_route(r"/v1/jobs$", jobs.list_)
-    server.add_route(r"/v1/jobs/([^/]+)$", jobs.get)
-    server.add_route(r"/v1/jobs/([^/]+)/history$", jobs.history)
+    server.add_route(r"/v1/workflows$", workflows.list_, before=guard("read"))
+    server.add_route(r"/v1/workflows/([^/]+)$", workflows.get, before=guard("read"))
+    server.add_route(
+        r"/v1/workflows/([^/]+)/versions$", workflows.versions, before=guard("read")
+    )
+    server.add_route(r"/v1/jobs$", jobs.list_, before=guard("read"))
+    server.add_route(r"/v1/jobs/([^/]+)$", jobs.get, before=guard("read"))
+    server.add_route(r"/v1/jobs/([^/]+)/history$", jobs.history, before=guard("read"))
 
     # HTML admin — fragment-or-page via the HX-Request header.
     server.add_route(r"/$", web.index, before=hx_check)

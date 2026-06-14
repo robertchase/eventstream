@@ -18,7 +18,7 @@ import time
 import pytest
 
 from eventstream import config as CONFIG
-from eventstream.logic import dlq, events, jobs, subscriptions, workflows
+from eventstream.logic import apikeys, dlq, events, jobs, subscriptions, workflows
 
 # ---- decode + lag (fakeredis gets these wrong) ------------------------------
 
@@ -166,6 +166,18 @@ async def test_dlqd_step_fails_job_on_real_redis(
     assert after["state"] == "failed"
     assert after["status"] == "terminal"
     assert len(await dlq.peek("runner")) == 1
+
+
+async def test_apikey_roundtrip_on_real_redis() -> None:
+    """create → verify (scope + hash) → revoke, against real Redis hashes."""
+    created = await apikeys.create("svc", ["read", "write"])
+    assert await apikeys.verify(created["token"], required="read") == "svc"
+    assert await apikeys.verify(created["token"], required="write") == "svc"
+    with pytest.raises(apikeys.InsufficientScope):
+        await apikeys.verify(created["token"], required="admin")
+    await apikeys.revoke(created["keyid"])
+    with pytest.raises(apikeys.InvalidToken):
+        await apikeys.verify(created["token"], required="read")
 
 
 async def test_timer_fires_via_tick_on_real_redis() -> None:

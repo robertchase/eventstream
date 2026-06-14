@@ -16,6 +16,7 @@ import meander
 
 from eventstream import config as CONFIG
 from eventstream.logic import jobs
+from eventstream.logic.apikeys import InsufficientScope, InvalidToken
 from eventstream.logic.exceptions import (
     EventNotFound,
     EventStreamError,
@@ -36,6 +37,8 @@ _STATUS: dict[type[EventStreamError], int] = {
     SubscriptionExists: 409,
     JobNotRunning: 409,
     JobRunning: 409,
+    InvalidToken: 401,
+    InsufficientScope: 403,
 }
 
 
@@ -49,7 +52,10 @@ def _on_exception(exc: Exception) -> meander.Response | None:
     """
     if isinstance(exc, EventStreamError):
         code = _STATUS.get(type(exc), 500)
-        return meander.Response(content=str(exc), code=code, content_type="text/plain")
+        headers = {"WWW-Authenticate": "Bearer"} if code == 401 else {}
+        return meander.Response(
+            content=str(exc), code=code, content_type="text/plain", headers=headers
+        )
     return None
 
 
