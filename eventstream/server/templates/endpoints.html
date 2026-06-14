@@ -1,0 +1,59 @@
+<div id="content">
+<h1>endpoints</h1>
+
+<section>
+<h2>JSON API <span class="muted">/v1</span></h2>
+<p class="muted">
+{% if auth_on %}
+Auth is <strong>ON</strong> — requests need a bearer token with the listed scope.
+{% else %}
+Auth is off; scopes apply when <code>EVENTSTREAM_AUTH=1</code>.
+{% endif %}
+</p>
+<table>
+<thead><tr><th>method</th><th>path</th><th>scope</th><th>description</th></tr></thead>
+<tbody>
+{% for r in rows if r.kind == "api" %}
+<tr>
+<td>{{ r.method }}</td>
+<td><code>{{ r.path }}</code></td>
+<td>{% if r.scope %}{{ r.scope }}{% else %}<span class="empty">—</span>{% endif %}</td>
+<td class="muted">{{ r.doc }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>Web UI</h2>
+<table>
+<thead><tr><th>method</th><th>path</th><th>description</th></tr></thead>
+<tbody>
+{% for r in rows if r.kind == "web" %}
+<tr>
+<td>{{ r.method }}</td>
+<td><a href="{{ r.path }}"><code>{{ r.path }}</code></a></td>
+<td class="muted">{{ r.doc }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+
+<section>
+<h2>Static</h2>
+<table>
+<thead><tr><th>method</th><th>path</th><th>description</th></tr></thead>
+<tbody>
+{% for r in rows if r.kind == "static" %}
+<tr>
+<td>{{ r.method }}</td>
+<td><code>{{ r.path }}</code></td>
+<td class="muted">{{ r.doc }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</section>
+</div>

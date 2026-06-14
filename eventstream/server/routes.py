@@ -1,20 +1,23 @@
 """Route table: JSON API + HTML admin + static, registered on a meander server.
 
-meander binds URL regex captures to handler parameters by position, so
-``r"/v1/streams/([^/]+)$"`` is enough to make the capture flow into the
-handler's first parameter — no path-args before hook needed.
+Routes are added through the local :func:`register.add` helper, which both
+registers the route and records it in :data:`CATALOG` — the single source the
+``/endpoints`` reference page renders, so the page can never drift from what's
+actually served.
 
-Domain exception translation lives in :mod:`eventstream.server`, registered
-with meander as a server-level ``exception_handler``. Handlers stay
-HTTP-agnostic; they're the same functions the CLI calls.
+meander binds URL regex captures to handler parameters by position. Domain
+exception translation lives in :mod:`eventstream.server`; auth scope guards
+attach only when ``CONFIG.auth`` (see ``design/auth.md``).
 
-A guard test in ``tests/test_server.py`` asserts every registered handler
-has real-class annotations; if someone adds ``from __future__ import
-annotations`` to a handler module, the test fails loudly (otherwise
-meander silently stops coercing query parameters to int/bool).
+A guard test in ``tests/test_server.py`` asserts every registered handler has
+real-class annotations; don't add ``from __future__ import annotations`` to a
+handler module or meander stops coercing query params.
 """
 
 from __future__ import annotations
+
+import inspect
+import re
 
 import meander
 
@@ -24,77 +27,113 @@ from eventstream.server import auth, web, writes
 from eventstream.server.hooks import hx_check
 from eventstream.server.static import serve_static
 
+#: Catalog of registered routes, rebuilt on each register(); read by the
+#: /endpoints page. Each entry: {method, path, scope, kind, doc}.
+CATALOG: list[dict] = []
+
+_HTTP_VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+_GROUP_RE = re.compile(r"\([^)]*\)")
+
+
+def _pretty_path(resource: str, handler) -> str:
+    """Turn a route regex into a readable path, naming captures from params."""
+    params = [
+        p.name
+        for p in inspect.signature(inspect.unwrap(handler)).parameters.values()
+        if p.default is p.empty
+        and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        and p.name != "is_hx"
+    ]
+    names = iter(params)
+    path = _GROUP_RE.sub(lambda _m: "{" + next(names, "?") + "}", resource)
+    return path.rstrip("$") or "/"
+
+
+def _doc(handler) -> str:
+    """First docstring line, minus any redundant leading ``VERB /path — ``."""
+    text = (handler.__doc__ or "").strip()
+    if not text:
+        return ""
+    line = text.splitlines()[0]
+    if " — " in line and line.split()[0] in _HTTP_VERBS:
+        line = line.split(" — ", 1)[1]
+    return line.replace("``", "")  # drop RST inline-literal markup for HTML
+
+
+def _kind(resource: str) -> str:
+    if resource.startswith("/v1"):
+        return "api"
+    if resource.startswith("/static"):
+        return "static"
+    return "web"
+
 
 def register(server: meander.server.Server) -> None:
-    """Add every eventstream route to ``server``."""
+    """Add every eventstream route to ``server`` and rebuild :data:`CATALOG`."""
+    CATALOG.clear()
 
-    def guard(scope: str):
-        """A scope before-hook when auth is on; nothing when it's off."""
-        return [auth.require(scope)] if CONFIG.auth else None
+    def add(resource, handler, *, method="GET", scope=None, before=None):
+        hooks: list = []
+        if scope and CONFIG.auth:
+            hooks.append(auth.require(scope))
+        if before:
+            hooks.append(before)
+        server.add_route(resource, handler, method=method, before=hooks or None)
+        CATALOG.append(
+            {
+                "method": method,
+                "path": _pretty_path(resource, handler),
+                "scope": scope,
+                "kind": _kind(resource),
+                "doc": _doc(handler),
+            }
+        )
 
-    # JSON API — bus. All reads today; write/admin guards attach with the
-    # write-API work (see design/auth.md). Guarded only when EVENTSTREAM_AUTH.
-    server.add_route(r"/v1/streams$", streams.list_, before=guard("read"))
-    server.add_route(r"/v1/streams/([^/]+)$", streams.show, before=guard("read"))
-    server.add_route(r"/v1/streams/([^/]+)/events$", streams.peek, before=guard("read"))
-    server.add_route(r"/v1/subscriptions$", subscriptions.list_, before=guard("read"))
-    server.add_route(
-        r"/v1/subscriptions/([^/]+)$", subscriptions.show, before=guard("read")
-    )
-    server.add_route(
-        r"/v1/subscriptions/([^/]+)/pending$",
-        subscriptions.pending,
-        before=guard("read"),
-    )
-    server.add_route(r"/v1/subscriptions/([^/]+)/dlq$", dlq.peek, before=guard("read"))
+    # JSON API — reads.
+    add(r"/v1/streams$", streams.list_, scope="read")
+    add(r"/v1/streams/([^/]+)$", streams.show, scope="read")
+    add(r"/v1/streams/([^/]+)/events$", streams.peek, scope="read")
+    add(r"/v1/subscriptions$", subscriptions.list_, scope="read")
+    add(r"/v1/subscriptions/([^/]+)$", subscriptions.show, scope="read")
+    add(r"/v1/subscriptions/([^/]+)/pending$", subscriptions.pending, scope="read")
+    add(r"/v1/subscriptions/([^/]+)/dlq$", dlq.peek, scope="read")
+    add(r"/v1/workflows$", workflows.list_, scope="read")
+    add(r"/v1/workflows/([^/]+)$", workflows.get, scope="read")
+    add(r"/v1/workflows/([^/]+)/versions$", workflows.versions, scope="read")
+    add(r"/v1/jobs$", jobs.list_, scope="read")
+    add(r"/v1/jobs/([^/]+)$", jobs.get, scope="read")
+    add(r"/v1/jobs/([^/]+)/history$", jobs.history, scope="read")
 
-    # JSON API — workflows & jobs.
-    server.add_route(r"/v1/workflows$", workflows.list_, before=guard("read"))
-    server.add_route(r"/v1/workflows/([^/]+)$", workflows.get, before=guard("read"))
-    server.add_route(
-        r"/v1/workflows/([^/]+)/versions$", workflows.versions, before=guard("read")
-    )
-    server.add_route(r"/v1/jobs$", jobs.list_, before=guard("read"))
-    server.add_route(r"/v1/jobs/([^/]+)$", jobs.get, before=guard("read"))
-    server.add_route(r"/v1/jobs/([^/]+)/history$", jobs.history, before=guard("read"))
-
-    # JSON API — writes (producer/consumer core four). publish/pull/ack need
-    # the `write` scope; creating a subscription is `admin`.
-    server.add_route(
+    # JSON API — writes (producer/consumer core four).
+    add(
         r"/v1/streams/([^/]+)/events$",
         writes.publish_event,
         method="POST",
-        before=guard("write"),
+        scope="write",
     )
-    server.add_route(
+    add(
         r"/v1/subscriptions/([^/]+)/pull$",
         writes.pull_event,
         method="GET",
-        before=guard("write"),
+        scope="write",
     )
-    server.add_route(
+    add(
         r"/v1/subscriptions/([^/]+)/ack/([^/]+)$",
         writes.ack_event,
         method="POST",
-        before=guard("write"),
+        scope="write",
     )
-    server.add_route(
-        r"/v1/subscriptions$",
-        writes.create_subscription,
-        method="POST",
-        before=guard("admin"),
-    )
+    add(r"/v1/subscriptions$", writes.create_subscription, method="POST", scope="admin")
 
     # HTML admin — fragment-or-page via the HX-Request header.
-    server.add_route(r"/$", web.index, before=hx_check)
-    server.add_route(r"/streams/([^/]+)$", web.stream_detail, before=hx_check)
-    server.add_route(
-        r"/subscriptions/([^/]+)$", web.subscription_detail, before=hx_check
-    )
-    server.add_route(r"/workflows$", web.workflow_list, before=hx_check)
-    server.add_route(r"/workflows/([^/]+)$", web.workflow_detail, before=hx_check)
-    server.add_route(r"/jobs$", web.job_list, before=hx_check)
-    server.add_route(r"/jobs/([^/]+)$", web.job_detail, before=hx_check)
+    add(r"/$", web.index, before=hx_check)
+    add(r"/streams/([^/]+)$", web.stream_detail, before=hx_check)
+    add(r"/subscriptions/([^/]+)$", web.subscription_detail, before=hx_check)
+    add(r"/workflows$", web.workflow_list, before=hx_check)
+    add(r"/workflows/([^/]+)$", web.workflow_detail, before=hx_check)
+    add(r"/jobs$", web.job_list, before=hx_check)
+    add(r"/jobs/([^/]+)$", web.job_detail, before=hx_check)
+    add(r"/endpoints$", web.endpoints, before=hx_check)
 
-    # Static — CSS, vendored htmx.
-    server.add_route(r"/static/(.+)$", serve_static)
+    # Static — CSS, vendored htmx + nomnoml.
+    add(r"/static/(.+)$", serve_static)

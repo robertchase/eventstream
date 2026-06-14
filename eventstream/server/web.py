@@ -11,6 +11,7 @@ handlers and the future import disables meander's type coercion. See
 
 import meander
 
+from eventstream import config as CONFIG
 from eventstream.logic import dlq, jobs, streams, subscriptions, workflows
 from eventstream.server import diagram
 from eventstream.server.templating import render_page
@@ -118,5 +119,20 @@ async def job_detail(job_id: str, is_hx: bool = False) -> meander.HTMLResponse:
         job=job,
         history=await jobs.history(job_id),
         diagram=diagram.to_nomnoml(wf["ast"], current_state=current),
+    )
+    return meander.HTMLResponse(content=body)
+
+
+async def endpoints(is_hx: bool = False) -> meander.HTMLResponse:
+    """Reference page: every route the server exposes, grouped by kind."""
+    # Lazy import avoids the routes ↔ web import cycle (routes imports web).
+    from eventstream.server import routes
+
+    body = render_page(
+        "endpoints.html",
+        fragment=is_hx,
+        title="endpoints",
+        rows=routes.CATALOG,
+        auth_on=CONFIG.auth,
     )
     return meander.HTMLResponse(content=body)
