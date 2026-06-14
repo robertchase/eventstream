@@ -22,8 +22,11 @@ def require(scope: str) -> Callable:
 
     async def hook(request: meander.Request) -> None:
         token = _bearer(request.http_headers)
-        principal = await apikeys.verify(token, required=scope)
-        request.content = (request.content or {}) | {"principal": principal}
+        # Stash the principal as an attribute, NOT in request.content: meander
+        # binds handler kwargs from content and rejects any key that isn't a
+        # parameter, so an injected "principal" would 400 every handler that
+        # takes arguments. Attributes are invisible to that binding.
+        request.principal = await apikeys.verify(token, required=scope)
 
     return hook
 

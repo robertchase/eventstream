@@ -20,7 +20,7 @@ import meander
 
 from eventstream import config as CONFIG
 from eventstream.logic import dlq, jobs, streams, subscriptions, workflows
-from eventstream.server import auth, web
+from eventstream.server import auth, web, writes
 from eventstream.server.hooks import hx_check
 from eventstream.server.static import serve_static
 
@@ -57,6 +57,33 @@ def register(server: meander.server.Server) -> None:
     server.add_route(r"/v1/jobs$", jobs.list_, before=guard("read"))
     server.add_route(r"/v1/jobs/([^/]+)$", jobs.get, before=guard("read"))
     server.add_route(r"/v1/jobs/([^/]+)/history$", jobs.history, before=guard("read"))
+
+    # JSON API — writes (producer/consumer core four). publish/pull/ack need
+    # the `write` scope; creating a subscription is `admin`.
+    server.add_route(
+        r"/v1/streams/([^/]+)/events$",
+        writes.publish_event,
+        method="POST",
+        before=guard("write"),
+    )
+    server.add_route(
+        r"/v1/subscriptions/([^/]+)/pull$",
+        writes.pull_event,
+        method="GET",
+        before=guard("write"),
+    )
+    server.add_route(
+        r"/v1/subscriptions/([^/]+)/ack/([^/]+)$",
+        writes.ack_event,
+        method="POST",
+        before=guard("write"),
+    )
+    server.add_route(
+        r"/v1/subscriptions$",
+        writes.create_subscription,
+        method="POST",
+        before=guard("admin"),
+    )
 
     # HTML admin — fragment-or-page via the HX-Request header.
     server.add_route(r"/$", web.index, before=hx_check)

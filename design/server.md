@@ -96,12 +96,29 @@ eventstream server [--host HOST] [--port PORT]
 Reads `EVENTSTREAM_HOST` and `EVENTSTREAM_PORT` from the environment with
 defaults `127.0.0.1` and `8080`. Backed by `meander.web.add_server() / run()`.
 
+## Write endpoints
+
+The producer/consumer core four are implemented (`eventstream/server/writes.py`),
+thin adapters that shape responses to `design/api.md`:
+
+```
+POST /v1/streams/{stream}/events          publish      → {id}      scope: write
+GET  /v1/subscriptions/{sub}/pull?wait=   pull         → event|204 scope: write
+POST /v1/subscriptions/{sub}/ack/{id}     ack          → 204       scope: write
+POST /v1/subscriptions                    create sub   → 201       scope: admin
+```
+
+ack carries an optional `{outcome, data}` body that drives the workflow
+engine (ack-with-outcome). Scopes are enforced by the auth before-hook only
+when `EVENTSTREAM_AUTH=1` (see `design/auth.md`).
+
 ## Open / deferred
 
-- **Write endpoints.** Publish, ack, DLQ drop/purge over HTTP. Add when
-  the web UI needs them (forms with HTMX `hx-post`).
+- **Admin write endpoints.** DLQ drop/purge, workflow register/delete, and
+  job create/advance/cancel/delete over HTTP. The CLI remains their path
+  until then.
 - **Scheduled events and DLQ redeliver views.** Land with their features.
-- **Auth.** Per `design/api.md` it's TBD; admin UI assumes a trusted local
-  network for now.
+- **Auth for the HTML admin.** The `/v1` API has bearer-token auth; the HTML
+  dashboard stays on the trusted-network posture (see `design/auth.md`).
 - **Per-panel refresh granularity.** If a panel becomes expensive, split it
   into its own partial route.

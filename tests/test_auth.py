@@ -136,7 +136,10 @@ async def test_require_hook_accepts_and_stamps_principal() -> None:
     hook = auth.require("read")
     req = _Req({"Authorization": f"Bearer {result['token']}"})
     await hook(req)
-    assert req.content["principal"] == "billing"
+    # principal goes on the request as an attribute, never into content
+    # (content keys must match handler params — see auth.require).
+    assert req.principal == "billing"
+    assert "principal" not in req.content
 
 
 async def test_require_hook_case_insensitive_header() -> None:
@@ -144,7 +147,32 @@ async def test_require_hook_case_insensitive_header() -> None:
     hook = auth.require("read")
     req = _Req({"authorization": f"bearer {result['token']}"})
     await hook(req)
-    assert req.content["principal"] == "svc"
+    assert req.principal == "svc"
+
+
+async def test_authed_param_handler_binds_without_extra_attribute_error() -> None:
+    """Regression: a handler that takes args must still bind under auth.
+
+    The hook must not pollute request.content, or meander raises
+    ExtraAttributeError on the injected principal for every param-taking route.
+    """
+    from meander.annotate import call
+    from meander.document import ServerDocument
+
+    result = await apikeys.create("svc", ["read"])
+    req = ServerDocument()
+    req.args = ["orders"]
+    req.http_headers = {"Authorization": f"Bearer {result['token']}"}
+    req.content = {}  # as for a GET (http_query)
+
+    await auth.require("read")(req)
+
+    async def show(name: str) -> str:
+        return name
+
+    bound = call(show, req)
+    assert await bound == "orders"
+    assert req.principal == "svc"
 
 
 async def test_require_hook_missing_header_rejected() -> None:
