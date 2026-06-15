@@ -60,6 +60,31 @@ async def peek(name: str, count: int, reverse: bool, as_json: bool) -> None:
         click.echo(line)
 
 
+@stream.command()
+@click.argument("name")
+@click.option(
+    "--keep", type=int, default=0, help="Keep at most this many newest events."
+)
+@coroutine
+async def truncate(name: str, keep: int) -> None:
+    """Discard events from STREAM (keeping the newest --keep); prints removed."""
+    removed = await streams.truncate(name, keep=keep)
+    click.echo(f"removed {removed}")
+
+
+@stream.command()
+@click.argument("name")
+@click.option(
+    "--cascade",
+    is_flag=True,
+    help="Also delete subscriptions on the stream.",
+)
+@coroutine
+async def delete(name: str, cascade: bool) -> None:
+    """Delete STREAM. Refused if it has subscriptions unless --cascade."""
+    await streams.delete(name, cascade=cascade)
+
+
 def _format_entry(entry: dict | None) -> str:
     """Render a ``{id, ts}`` entry summary for human output."""
     if entry is None:

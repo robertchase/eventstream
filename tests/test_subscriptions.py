@@ -231,3 +231,39 @@ async def test_migrate_from_legacy_hash_format(fake_redis) -> None:
         {"name": "billing-worker", "stream": "orders"},
         {"name": "fulfillment", "stream": "orders"},
     ]
+
+
+# ---- delete -----------------------------------------------------------------
+
+
+async def test_delete_removes_subscription() -> None:
+    await subscriptions.create("w", "orders")
+    await subscriptions.delete("w")
+    assert await subscriptions.list_() == []
+    with pytest.raises(SubscriptionNotFound):
+        await subscriptions.stream_of("w")
+
+
+async def test_delete_unknown_subscription_raises() -> None:
+    with pytest.raises(SubscriptionNotFound):
+        await subscriptions.delete("ghost")
+
+
+async def test_delete_clears_dlq_and_lets_group_be_recreated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from eventstream.logic import dlq
+
+    monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
+    monkeypatch.setattr(CONFIG, "max_deliveries", 1)
+    await subscriptions.create("w", "orders")
+    await events.publish("orders", {"n": 1})
+    await events.pull("w", wait=0)
+    await asyncio.sleep(0.1)
+    await events.pull("w", wait=0)  # → DLQ
+    assert len(await dlq.peek("w")) == 1
+
+    await subscriptions.delete("w")
+    # Recreating with the same name starts clean: no leftover DLQ, fresh group.
+    await subscriptions.create("w", "orders")
+    assert await dlq.peek("w") == []

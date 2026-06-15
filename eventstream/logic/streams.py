@@ -10,9 +10,13 @@ import json
 from datetime import UTC, datetime
 
 from eventstream.logic import backend
-from eventstream.logic.exceptions import StreamNotFound
+from eventstream.logic.exceptions import EventStreamError, StreamNotFound
 
 _REGISTRY = "eventstream:streams"
+
+
+class StreamHasSubscriptions(EventStreamError):
+    """Refused: the stream still has subscriptions and cascade was not set."""
 
 
 def key(name: str) -> str:
@@ -57,6 +61,39 @@ async def peek(name: str, *, count: int = 10, reverse: bool = False) -> list[dic
     else:
         entries = await client.xrange(key(name), min="-", max="+", count=count)
     return [_event_from_entry(eid, fields) for eid, fields in entries]
+
+
+async def truncate(name: str, *, keep: int = 0) -> int:
+    """Discard events from ``name``, keeping at most ``keep`` newest.
+
+    Destructive: drops events even if subscriptions haven't read them. The
+    stream and its consumer groups remain. Returns the number removed.
+    """
+    await _require_exists(name)
+    return await backend.client().xtrim(key(name), maxlen=keep, approximate=False)
+
+
+async def delete(name: str, *, cascade: bool = False) -> None:
+    """Delete a stream. Refused if it has subscriptions unless ``cascade``.
+
+    With ``cascade``, every subscription on the stream is deleted first
+    (consumer group, config, and DLQ), then the stream itself.
+    """
+    await _require_exists(name)
+    # Lazy import: subscriptions imports streams, so this avoids a cycle.
+    from eventstream.logic import subscriptions
+
+    subs = await subscriptions.list_(name)
+    if subs and not cascade:
+        raise StreamHasSubscriptions(
+            f"stream {name!r} has {len(subs)} subscription(s); "
+            f"delete them or pass cascade"
+        )
+    for sub in subs:
+        await subscriptions.delete(sub["name"])
+    client = backend.client()
+    await client.delete(key(name))
+    await client.srem(_REGISTRY, name)
 
 
 async def _require_exists(name: str) -> None:

@@ -71,10 +71,11 @@ async def versions(name: str) -> None:
 
 @workflow.command()
 @click.argument("name")
+@click.option("--cascade", is_flag=True, help="Also delete jobs running this workflow.")
 @coroutine
-async def delete(name: str) -> None:
-    """Delete every version of NAME."""
-    await workflows.delete(name)
+async def delete(name: str, cascade: bool) -> None:
+    """Delete every version of NAME. Refused if it has jobs unless --cascade."""
+    await workflows.delete(name, cascade=cascade)
 
 
 def _print_summary(wf: dict) -> None:

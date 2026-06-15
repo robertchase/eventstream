@@ -25,7 +25,8 @@ from eventstream.logic.exceptions import (
     SubscriptionNotFound,
 )
 from eventstream.logic.jobs import JobNotFound, JobNotRunning, JobRunning
-from eventstream.logic.workflows import WorkflowNotFound
+from eventstream.logic.streams import StreamHasSubscriptions
+from eventstream.logic.workflows import WorkflowHasJobs, WorkflowNotFound
 from eventstream.server.routes import register
 
 _STATUS: dict[type[EventStreamError], int] = {
@@ -37,6 +38,8 @@ _STATUS: dict[type[EventStreamError], int] = {
     SubscriptionExists: 409,
     JobNotRunning: 409,
     JobRunning: 409,
+    StreamHasSubscriptions: 409,
+    WorkflowHasJobs: 409,
     InvalidToken: 401,
     InsufficientScope: 403,
 }

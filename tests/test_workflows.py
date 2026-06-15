@@ -97,3 +97,34 @@ async def test_delete_removes_everything() -> None:
 async def test_delete_unknown_raises() -> None:
     with pytest.raises(workflows.WorkflowNotFound):
         await workflows.delete("ghost")
+
+
+# ---- delete cascade guard (vs jobs) -----------------------------------------
+
+
+async def test_delete_refused_when_jobs_exist() -> None:
+    from eventstream.logic import jobs
+
+    await workflows.register(_SOURCE)  # workflow "w", terminal-only
+    await jobs.create("w")
+    with pytest.raises(workflows.WorkflowHasJobs):
+        await workflows.delete("w")
+    # Still registered.
+    assert (await workflows.get("w"))["name"] == "w"
+
+
+async def test_delete_cascade_removes_jobs_and_workflow() -> None:
+    from eventstream.logic import jobs
+
+    await workflows.register(_SOURCE)
+    job = await jobs.create("w")
+    await workflows.delete("w", cascade=True)
+    assert await workflows.list_() == []
+    with pytest.raises(jobs.JobNotFound):
+        await jobs.get(job["id"])
+
+
+async def test_delete_without_jobs_still_works() -> None:
+    await workflows.register(_SOURCE)
+    await workflows.delete("w")
+    assert await workflows.list_() == []

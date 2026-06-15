@@ -130,6 +130,14 @@ async def pending(name: str, count: int, as_json: bool) -> None:
         )
 
 
+@sub.command()
+@click.argument("name")
+@coroutine
+async def delete(name: str) -> None:
+    """Delete subscription NAME (its consumer group, config, and DLQ)."""
+    await subscriptions.delete(name)
+
+
 def _with_default(value: object, explicit: bool) -> str:
     """Format a config value, marking it ``(default)`` when not overridden."""
     return f"{value}" if explicit else f"{value}  (default)"

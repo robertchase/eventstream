@@ -68,6 +68,24 @@ async def create(
     await streams.register(stream)
 
 
+async def delete(name: str) -> None:
+    """Delete a subscription: its consumer group, config, and DLQ.
+
+    Unconditional — nothing depends on a subscription. Dead-lettered events
+    for this subscription are discarded along with it.
+    """
+    stream = await stream_of(name)  # raises SubscriptionNotFound if absent
+    client = backend.client()
+    # Destroy the consumer group on the stream (no-op if already gone).
+    try:
+        await client.xgroup_destroy(streams.key(stream), name)
+    except ResponseError:
+        pass
+    await client.delete(_key(name))
+    await client.delete(f"eventstream:dlq:{name}")  # mirrors dlq._key layout
+    await client.srem(_INDEX, name)
+
+
 async def set_(
     name: str,
     *,

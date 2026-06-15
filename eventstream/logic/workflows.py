@@ -27,6 +27,10 @@ class WorkflowNotFound(EventStreamError):
     """A referenced workflow (or workflow version) does not exist."""
 
 
+class WorkflowHasJobs(EventStreamError):
+    """Refused: the workflow still has jobs and cascade was not set."""
+
+
 def _versions_key(name: str) -> str:
     return f"eventstream:workflow:{name}:versions"
 
@@ -108,11 +112,28 @@ async def versions(name: str) -> list[int]:
     return [int(v) for v in raw]
 
 
-async def delete(name: str) -> None:
-    """Remove every version of a workflow."""
+async def delete(name: str, *, cascade: bool = False) -> None:
+    """Remove every version of a workflow.
+
+    Refused if any jobs reference it unless ``cascade`` — with cascade, those
+    jobs are deleted first (running jobs forced), then the workflow.
+    """
     client = backend.client()
     if not await client.sismember(_INDEX, name):
         raise WorkflowNotFound(f"workflow {name!r} does not exist")
+
+    # Lazy import: jobs imports workflows, so this avoids a cycle.
+    from eventstream.logic import jobs
+
+    referencing = await jobs.list_(workflow=name)
+    if referencing and not cascade:
+        raise WorkflowHasJobs(
+            f"workflow {name!r} has {len(referencing)} job(s); "
+            f"delete them or pass cascade"
+        )
+    for job in referencing:
+        await jobs.delete(job["id"], force=True)
+
     raw = await client.zrange(_versions_key(name), 0, -1, withscores=False)
     pipe = client.pipeline()
     for v in raw:
