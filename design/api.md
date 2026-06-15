@@ -16,7 +16,8 @@ Three nouns:
 - **Subscription** — a named cursor on a stream. Remembers where it has read up
   to. Multiple workers sharing one subscription split the work. Two
   subscriptions on the same stream each see every event.
-- **Event** — a single record: id, key, payload, timestamp.
+- **Event** — a single record: id, name, payload, timestamp. The `name` is
+  the event type, so one stream can carry several kinds of event.
 
 One lifecycle: **publish → pull → ack**.
 
@@ -43,29 +44,21 @@ POST /v1/streams/orders/events
 Idempotency-Key: <uuid>          # optional; dedupes within retention window
 Content-Type: application/json
 
-{ "key": "order-123", "payload": { ... } }
+{ "name": "order-placed", "payload": { ... } }
 
 → 200 { "id": "evt_01J..." }
 ```
 
-`key` is optional. It is stored with the event and returned on pull, so
-consumers that care about grouping can read it.
-
-> **Not yet a delivery guarantee.** The intent is that events sharing a key
-> are delivered to the same worker in order, but the current Redis Streams
-> backend does not implement key affinity — a consumer group hands each
-> pending entry to whichever worker pulls next, regardless of key. So today
-> `key` is metadata only. Honoring same-key→same-worker ordering needs
-> key-hashed sub-streams (a partition count knob) and is deferred; see
-> "Per-key ordering" under *Deliberately out of scope*. With a single
-> worker per subscription, ordering is the stream's natural append order.
+`name` is required — it is the event type. A single stream can carry several
+kinds of event; `name` is stored with the event and returned on pull, so
+consumers switch on it to decide how to handle each one.
 
 When `deliver_at` (absolute ISO 8601 timestamp) is set and in the future,
 the event is queued for delivery at that time:
 
 ```
 POST /v1/streams/orders/events
-{ "key": "...", "payload": {...}, "deliver_at": "2026-05-26T10:00:00Z" }
+{ "name": "...", "payload": {...}, "deliver_at": "2026-05-26T10:00:00Z" }
 
 → 202 { "schedule_id": "sch_01J..." }
 ```
@@ -93,7 +86,7 @@ creation are delivered.
 ```
 GET /v1/subscriptions/billing-worker/pull?wait=30s
 
-→ 200 { "id": "evt_01J...", "key": "order-123", "payload": {...}, "ts": "..." }
+→ 200 { "id": "evt_01J...", "name": "order-placed", "payload": {...}, "ts": "..." }
 → 204  (nothing available within the wait window)
 ```
 
@@ -209,11 +202,11 @@ use case demands them.
   delivery. Scope (global for maintenance, per-stream, or per-subscription)
   TBD when the use case clarifies. Publish behavior while paused (accept
   and queue vs reject) is also TBD.
-- **Per-key ordering.** `key` is stored but not yet acted on (see *Publish*).
-  Honoring same-key→same-worker in-order delivery means hashing the key to
-  one of N sub-streams per subscription, which adds a partition-count knob.
-  Deferred until a consumer needs it. Global ordering within a stream is not
-  offered either way.
+- **Ordering / partitioning.** Delivery follows the stream's natural append
+  order, handed to whichever worker pulls next. Same-key→same-worker affinity
+  (hashing some attribute to one of N sub-streams per subscription, with a
+  partition-count knob) is deferred until a consumer needs it. Global ordering
+  within a stream is not offered either way.
 - **Multi-tenancy.** Single global namespace. Add `/v1/tenants/{tenant}/...`
   prefix later if needed.
 - **Auth model.** TBD. Likely token-based with per-stream and per-subscription

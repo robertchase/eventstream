@@ -30,10 +30,12 @@ async def peek(subscription: str, count: int, as_json: bool) -> None:
         click.echo("(no dead events)", err=True)
         return
     for entry in entries:
-        parts = [entry["id"], f"delivery={entry['delivery_count']}"]
-        if entry.get("key"):
-            parts.append(f"key={entry['key']}")
-        parts.append(json.dumps(entry["payload"]))
+        parts = [
+            entry["id"],
+            entry.get("name", ""),
+            f"delivery={entry['delivery_count']}",
+            json.dumps(entry["payload"]),
+        ]
         click.echo("  ".join(parts))
 
 

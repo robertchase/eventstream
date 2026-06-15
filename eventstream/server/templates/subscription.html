@@ -37,12 +37,12 @@
 <h2>DLQ</h2>
 {% if dead %}
 <table>
-<thead><tr><th>event id</th><th>key</th><th>deliveries</th><th>dead at</th><th>payload</th></tr></thead>
+<thead><tr><th>event id</th><th>name</th><th>deliveries</th><th>dead at</th><th>payload</th></tr></thead>
 <tbody>
 {% for d in dead %}
 <tr>
 <td><code>{{ d.id }}</code></td>
-<td>{{ d.key or "—" }}</td>
+<td><code>{{ d.name }}</code></td>
 <td>{{ d.delivery_count }}</td>
 <td class="muted">{{ d.dead_at }}</td>
 <td><code>{{ d.payload | tojson }}</code></td>

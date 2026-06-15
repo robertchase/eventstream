@@ -15,16 +15,16 @@ from eventstream.server import writes
 
 
 async def test_publish_returns_id_and_persists() -> None:
-    res = await writes.publish_event("orders", {"n": 1}, key="k")
+    res = await writes.publish_event("orders", "placed", {"n": 1})
     assert list(res.keys()) == ["id"]
     seen = await streams.peek("orders")
     assert seen[0]["payload"] == {"n": 1}
-    assert seen[0]["key"] == "k"
+    assert seen[0]["name"] == "placed"
 
 
 async def test_pull_returns_event_then_204() -> None:
     await subscriptions.create("w", "orders")
-    await writes.publish_event("orders", {"n": 1})
+    await writes.publish_event("orders", "ev", {"n": 1})
     event = await writes.pull_event("w", wait=0)
     assert event["payload"] == {"n": 1}
     empty = await writes.pull_event("w", wait=0)
@@ -34,7 +34,7 @@ async def test_pull_returns_event_then_204() -> None:
 
 async def test_ack_returns_204_and_clears_pending() -> None:
     await subscriptions.create("w", "orders")
-    published = await writes.publish_event("orders", {"n": 1})
+    published = await writes.publish_event("orders", "ev", {"n": 1})
     await writes.pull_event("w", wait=0)
     result = await writes.ack_event("w", published["id"])
     assert isinstance(result, meander.Response)

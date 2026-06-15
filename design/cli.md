@@ -17,7 +17,7 @@ Top-level verbs for the hot path; noun-grouped subcommands for admin.
 ### Producer
 
 ```
-eventstream publish <stream> [--key K]
+eventstream publish <stream> <name>
                               [--payload JSON | --payload-file F | -]
                               [--deliver-at TIME]
                               [--idempotency-key K]
@@ -67,10 +67,10 @@ eventstream dlq purge <sub>
 
 ```bash
 # publish, payload from stdin
-echo '{"order_id":123}' | eventstream publish orders --key order-123 -
+echo '{"order_id":123}' | eventstream publish orders order-placed -
 
 # publish, scheduled
-eventstream publish reminders --key user-42 \
+eventstream publish reminders reminder-due \
     --payload '{"msg":"hi"}' \
     --deliver-at 2026-05-30T18:00:00Z
 
@@ -108,16 +108,16 @@ from eventstream.logic import events
 
 @click.command()
 @click.argument("stream")
-@click.option("--key")
+@click.argument("name")
 @click.option("--payload")
 @click.option("--payload-file", type=click.File("r"))
 @click.option("--deliver-at", type=click.DateTime())
 @click.option("--idempotency-key")
-def publish(stream, key, payload, payload_file, deliver_at,
+def publish(stream, name, payload, payload_file, deliver_at,
             idempotency_key):
     """Publish an event to a stream."""
     raw = _read_payload(payload, payload_file)
-    result = events.publish(stream, raw, key=key,
+    result = events.publish(stream, name, raw,
                             idempotency_key=idempotency_key,
                             deliver_at=deliver_at)
     click.echo(json.dumps(result))

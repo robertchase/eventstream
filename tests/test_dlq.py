@@ -18,7 +18,7 @@ async def test_pull_does_not_dlq_within_max_deliveries(
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 2)
     await subscriptions.create("w", "orders")
-    event_id = await events.publish("orders", {"n": 1})
+    event_id = await events.publish("orders", "ev", {"n": 1})
 
     first = await events.pull("w", wait=0)
     assert first is not None and first["delivery_count"] == 1
@@ -38,7 +38,7 @@ async def test_pull_moves_to_dlq_past_max_deliveries(
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 2)
     await subscriptions.create("w", "orders")
-    event_id = await events.publish("orders", {"n": 1}, key="k")
+    event_id = await events.publish("orders", "placed", {"n": 1})
 
     await events.pull("w", wait=0)  # delivery 1
     await asyncio.sleep(0.1)
@@ -53,7 +53,7 @@ async def test_pull_moves_to_dlq_past_max_deliveries(
     entry = dead[0]
     assert entry["id"] == event_id
     assert entry["stream"] == "orders"
-    assert entry["key"] == "k"
+    assert entry["name"] == "placed"
     assert entry["payload"] == {"n": 1}
     assert entry["delivery_count"] == 3
     assert "dead_at" in entry
@@ -66,7 +66,7 @@ async def test_dead_event_does_not_redeliver(
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 1)
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
 
     await events.pull("w", wait=0)  # delivery 1
     await asyncio.sleep(0.1)
@@ -91,9 +91,9 @@ async def test_peek_returns_oldest_first_and_respects_count(
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 1)
     await subscriptions.create("w", "orders")
-    id_a = await events.publish("orders", {"n": "a"})
-    id_b = await events.publish("orders", {"n": "b"})
-    id_c = await events.publish("orders", {"n": "c"})
+    id_a = await events.publish("orders", "ev", {"n": "a"})
+    id_b = await events.publish("orders", "ev", {"n": "b"})
+    id_c = await events.publish("orders", "ev", {"n": "c"})
     await events.pull("w", wait=0)
     await events.pull("w", wait=0)
     await events.pull("w", wait=0)
@@ -112,7 +112,7 @@ async def test_drop_removes_one_dead_event(
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 1)
     await subscriptions.create("w", "orders")
-    event_id = await events.publish("orders", {"n": 1})
+    event_id = await events.publish("orders", "ev", {"n": 1})
     await events.pull("w", wait=0)
     await asyncio.sleep(0.1)
     await events.pull("w", wait=0)  # → DLQ
@@ -131,8 +131,8 @@ async def test_purge_clears_dlq(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 1)
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
     await events.pull("w", wait=0)
     await events.pull("w", wait=0)
     await asyncio.sleep(0.1)

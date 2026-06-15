@@ -371,8 +371,10 @@ async def _flush_side_effects(client, job_id, recorder, now, *, current_state):
         await client.rpush(_history_key(job_id), json.dumps({**trans, "ts": now}))
 
     for emit in recorder.emits:
-        payload = {"_event": emit["event_type"], "_job": job_id, **emit["payload"]}
-        event_id = await events.publish(emit["stream"], payload)
+        # The workflow's EMIT event-type becomes the event's name; _job is an
+        # informational tag (routing back to the job is via the emit map below).
+        payload = {"_job": job_id, **emit["payload"]}
+        event_id = await events.publish(emit["stream"], emit["event_type"], payload)
         # Register the emit → job map so a worker's ack-with-outcome can
         # route back to this job in this state. Single-use, with a TTL so
         # never-acked emits don't accumulate forever.

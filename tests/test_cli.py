@@ -14,7 +14,9 @@ def test_publish_then_pull_roundtrip() -> None:
     created = runner.invoke(cli, ["sub", "create", "w", "--stream", "orders"])
     assert created.exit_code == 0
 
-    published = runner.invoke(cli, ["publish", "orders", "--payload", '{"n": 1}'])
+    published = runner.invoke(
+        cli, ["publish", "orders", "placed", "--payload", '{"n": 1}']
+    )
     assert published.exit_code == 0
     event_id = published.output.strip()
 

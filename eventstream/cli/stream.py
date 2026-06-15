@@ -53,10 +53,7 @@ async def peek(name: str, count: int, reverse: bool, as_json: bool) -> None:
         click.echo(json.dumps(events))
         return
     for event in events:
-        line = event["id"]
-        if "key" in event:
-            line += f"  key={event['key']}"
-        line += f"  {json.dumps(event['payload'])}"
+        line = f"{event['id']}  {event['name']}  {json.dumps(event['payload'])}"
         click.echo(line)
 
 

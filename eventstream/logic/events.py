@@ -30,15 +30,13 @@ from eventstream import config as CONFIG
 from eventstream.logic import backend, dlq, streams, subscriptions
 
 
-async def publish(stream: str, payload: dict, *, key: str | None = None) -> str:
-    """Append an event to ``stream`` and return its server-assigned id.
+async def publish(stream: str, name: str, payload: dict) -> str:
+    """Append an event named ``name`` to ``stream``; return its id.
 
-    The stream is created on first publish. ``key`` is stored alongside the
-    event for future per-key ordering; it is optional.
+    ``name`` is the event type — a single stream can carry many kinds, and
+    consumers switch on it. Required. The stream is created on first publish.
     """
-    fields: dict[str, str] = {"payload": json.dumps(payload)}
-    if key is not None:
-        fields["key"] = key
+    fields: dict[str, str] = {"name": name, "payload": json.dumps(payload)}
     event_id = await backend.client().xadd(streams.key(stream), fields)
     await streams.register(stream)
     return event_id
@@ -151,12 +149,10 @@ def _consumer() -> str:
 def _to_event(event_id: str, fields: dict, *, delivery_count: int) -> dict:
     """Build an event dict from a Redis stream entry."""
     ms = int(event_id.split("-", 1)[0])
-    event: dict = {
+    return {
         "id": event_id,
+        "name": fields.get("name", ""),
         "payload": json.loads(fields["payload"]),
         "ts": datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat(),
         "delivery_count": delivery_count,
     }
-    if "key" in fields:
-        event["key"] = fields["key"]
-    return event

@@ -15,13 +15,13 @@
 <h2>recent events (newest first)</h2>
 {% if recent %}
 <table>
-<thead><tr><th>id</th><th>ts</th><th>key</th><th>payload</th></tr></thead>
+<thead><tr><th>id</th><th>ts</th><th>name</th><th>payload</th></tr></thead>
 <tbody>
 {% for e in recent %}
 <tr>
 <td><code>{{ e.id }}</code></td>
 <td class="muted">{{ e.ts }}</td>
-<td>{{ e.key or "—" }}</td>
+<td><code>{{ e.name }}</code></td>
 <td><code>{{ e.payload | tojson }}</code></td>
 </tr>
 {% endfor %}

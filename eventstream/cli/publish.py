@@ -13,7 +13,7 @@ from eventstream.logic import events
 
 @click.command()
 @click.argument("stream")
-@click.option("--key", default=None, help="Optional partition key.")
+@click.argument("name")
 @click.option("--payload", default=None, help="Inline JSON payload (object).")
 @click.option(
     "--payload-file",
@@ -24,13 +24,13 @@ from eventstream.logic import events
 @coroutine
 async def publish(
     stream: str,
-    key: str | None,
+    name: str,
     payload: str | None,
     payload_file: IO[str] | None,
 ) -> None:
-    """Publish one event to STREAM and print its id."""
+    """Publish one NAME event to STREAM and print its id."""
     data = _read_payload(payload, payload_file)
-    click.echo(await events.publish(stream, data, key=key))
+    click.echo(await events.publish(stream, name, data))
 
 
 def _read_payload(payload: str | None, payload_file: IO[str] | None) -> dict:

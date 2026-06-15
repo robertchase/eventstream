@@ -21,9 +21,9 @@ import meander
 from eventstream.logic import events, subscriptions
 
 
-async def publish_event(stream, payload: dict, key: str | None = None):
-    """POST /v1/streams/{stream}/events — body ``{payload, key?}`` → ``{id}``."""
-    event_id = await events.publish(stream, payload, key=key)
+async def publish_event(stream, name: str, payload: dict):
+    """POST /v1/streams/{stream}/events — body ``{name, payload}`` → ``{id}``."""
+    event_id = await events.publish(stream, name, payload)
     return {"id": event_id}
 
 

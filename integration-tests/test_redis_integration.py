@@ -26,11 +26,11 @@ from eventstream.logic import apikeys, dlq, events, jobs, subscriptions, workflo
 async def test_decode_responses_returns_str_not_bytes() -> None:
     """Real client with decode_responses=True yields str/dict, no wrapper."""
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1}, key="order-7")
+    await events.publish("orders", "order-placed", {"n": 1})
     event = await events.pull("w", wait=0)
     assert event is not None
     assert isinstance(event["id"], str)
-    assert isinstance(event["key"], str) and event["key"] == "order-7"
+    assert isinstance(event["name"], str) and event["name"] == "order-placed"
     assert event["payload"] == {"n": 1}
     # hgetall-backed read (subscription config) also comes back as str.
     cfg = await subscriptions.config("w")
@@ -40,9 +40,9 @@ async def test_decode_responses_returns_str_not_bytes() -> None:
 async def test_subscription_lag_is_exact() -> None:
     """Real Redis reports the true lag; fakeredis under-counts by one."""
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
-    await events.publish("orders", {"n": 3})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
+    await events.publish("orders", "ev", {"n": 3})
     info = await subscriptions.show("w")
     assert info["lag"] == 3
 
@@ -73,7 +73,7 @@ async def test_unacked_event_redelivered_after_real_lease(
 ) -> None:
     monkeypatch.setattr(CONFIG, "lease_seconds", 1.0)
     await subscriptions.create("w", "orders")
-    event_id = await events.publish("orders", {"n": 1})
+    event_id = await events.publish("orders", "ev", {"n": 1})
 
     first = await events.pull("w", wait=0)
     assert first is not None and first["id"] == event_id
@@ -87,7 +87,7 @@ async def test_unacked_event_redelivered_after_real_lease(
 
 async def test_ack_clears_pending_on_real_redis() -> None:
     await subscriptions.create("w", "orders")
-    event_id = await events.publish("orders", {"n": 1})
+    event_id = await events.publish("orders", "ev", {"n": 1})
     await events.pull("w", wait=0)
     await events.ack("w", event_id)
     assert await subscriptions.pending("w") == []
@@ -139,7 +139,7 @@ async def test_job_advances_via_ack_with_outcome() -> None:
 
     event = await events.pull("worker", wait=0)
     assert event is not None
-    assert event["payload"]["_event"] == "hello"
+    assert event["name"] == "hello"
     assert event["payload"]["to"] == "alice"
 
     advanced = await events.ack("worker", event["id"], outcome="ok", data={})

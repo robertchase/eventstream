@@ -34,9 +34,7 @@ async def pull(
 
 def _format(event: dict) -> str:
     """One-line human rendering of an event."""
-    parts = [event["id"]]
-    if "key" in event:
-        parts.append(f"key={event['key']}")
+    parts = [event["id"], event["name"]]
     if event.get("delivery_count", 1) > 1:
         parts.append(f"delivery={event['delivery_count']}")
     parts.append(json.dumps(event["payload"]))

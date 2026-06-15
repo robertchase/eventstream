@@ -52,8 +52,8 @@ async def test_show_unknown_subscription_raises() -> None:
 
 async def test_show_reports_lag_and_no_in_flight_when_idle() -> None:
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
     info = await subscriptions.show("w")
     assert info["name"] == "w"
     assert info["stream"] == "orders"
@@ -73,8 +73,8 @@ async def test_show_reports_in_flight_after_pull(
 ) -> None:
     monkeypatch.setattr(CONFIG, "lease_seconds", 60.0)
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
     await events.pull("w", wait=0)
     info = await subscriptions.show("w")
     assert info["in_flight"] == 1
@@ -89,7 +89,7 @@ async def test_pending_unknown_subscription_raises() -> None:
 
 async def test_pending_empty_when_nothing_leased() -> None:
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     assert await subscriptions.pending("w") == []
 
 
@@ -98,7 +98,7 @@ async def test_pending_lists_leased_entry(
 ) -> None:
     monkeypatch.setattr(CONFIG, "lease_seconds", 60.0)
     await subscriptions.create("w", "orders")
-    event_id = await events.publish("orders", {"n": 1})
+    event_id = await events.publish("orders", "ev", {"n": 1})
     await events.pull("w", wait=0)
     entries = await subscriptions.pending("w")
     assert len(entries) == 1
@@ -114,7 +114,7 @@ async def test_pending_reflects_redelivery_count(
 ) -> None:
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     await events.pull("w", wait=0)
     await asyncio.sleep(0.1)
     await events.pull("w", wait=0)
@@ -174,7 +174,7 @@ async def test_per_sub_lease_overrides_global(
     """A sub with explicit lease ignores CONFIG and reclaims on its own clock."""
     monkeypatch.setattr(CONFIG, "lease_seconds", 60.0)  # global is long
     await subscriptions.create("fast", "orders", lease_seconds=0.05)
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     first = await events.pull("fast", wait=0)
     assert first is not None
     await asyncio.sleep(0.1)
@@ -190,7 +190,7 @@ async def test_per_sub_max_deliveries_overrides_global(
     monkeypatch.setattr(CONFIG, "max_deliveries", 99)  # global is generous
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     await subscriptions.create("strict", "orders", max_deliveries=1)
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     await events.pull("strict", wait=0)  # delivery 1
     await asyncio.sleep(0.1)
     # delivery 2 exceeds max=1 → DLQ; pull returns None
@@ -257,7 +257,7 @@ async def test_delete_clears_dlq_and_lets_group_be_recreated(
     monkeypatch.setattr(CONFIG, "lease_seconds", 0.05)
     monkeypatch.setattr(CONFIG, "max_deliveries", 1)
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     await events.pull("w", wait=0)
     await asyncio.sleep(0.1)
     await events.pull("w", wait=0)  # → DLQ

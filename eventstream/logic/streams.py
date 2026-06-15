@@ -112,14 +112,12 @@ def _entry_meta(entry: tuple | None) -> dict | None:
 
 def _event_from_entry(event_id: str, fields: dict) -> dict:
     """Build an event dict for read-only inspection (no delivery count)."""
-    event: dict = {
+    return {
         "id": event_id,
+        "name": fields.get("name", ""),
         "payload": json.loads(fields["payload"]),
         "ts": _ts_from_id(event_id),
     }
-    if "key" in fields:
-        event["key"] = fields["key"]
-    return event
 
 
 def _ts_from_id(event_id: str) -> str:

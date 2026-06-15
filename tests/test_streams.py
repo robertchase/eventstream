@@ -9,14 +9,14 @@ from eventstream.logic.exceptions import StreamNotFound
 
 
 async def test_publish_registers_stream() -> None:
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     assert await streams.list_() == ["orders"]
 
 
 async def test_list_is_sorted_and_deduped() -> None:
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
-    await events.publish("billing", {"n": 3})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
+    await events.publish("billing", "ev", {"n": 3})
     assert await streams.list_() == ["billing", "orders"]
 
 
@@ -37,8 +37,8 @@ async def test_show_empty_stream_has_no_entries() -> None:
 
 async def test_show_populated_stream_has_first_last_and_groups() -> None:
     await subscriptions.create("w", "orders")
-    first_id = await events.publish("orders", {"n": 1})
-    last_id = await events.publish("orders", {"n": 2})
+    first_id = await events.publish("orders", "ev", {"n": 1})
+    last_id = await events.publish("orders", "ev", {"n": 2})
     info = await streams.show("orders")
     assert info["length"] == 2
     assert info["first"]["id"] == first_id
@@ -53,19 +53,19 @@ async def test_peek_unknown_stream_raises() -> None:
 
 
 async def test_peek_returns_events_in_order_and_respects_count() -> None:
-    await events.publish("orders", {"n": 1}, key="a")
-    await events.publish("orders", {"n": 2})
-    await events.publish("orders", {"n": 3})
+    await events.publish("orders", "placed", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
+    await events.publish("orders", "ev", {"n": 3})
     seen = await streams.peek("orders", count=2)
     assert [e["payload"] for e in seen] == [{"n": 1}, {"n": 2}]
-    assert seen[0]["key"] == "a"
+    assert seen[0]["name"] == "placed"
     assert "ts" in seen[0]
 
 
 async def test_peek_reverse_yields_newest_first() -> None:
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
-    await events.publish("orders", {"n": 3})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
+    await events.publish("orders", "ev", {"n": 3})
     seen = await streams.peek("orders", count=2, reverse=True)
     assert [e["payload"] for e in seen] == [{"n": 3}, {"n": 2}]
 
@@ -73,7 +73,7 @@ async def test_peek_reverse_yields_newest_first() -> None:
 async def test_peek_does_not_consume_for_subscriptions() -> None:
     """peek bypasses consumer groups; a sub still sees its events afterward."""
     await subscriptions.create("w", "orders")
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     assert len(await streams.peek("orders")) == 1
     event = await events.pull("w", wait=0)
     assert event is not None
@@ -84,9 +84,9 @@ async def test_peek_does_not_consume_for_subscriptions() -> None:
 
 
 async def test_truncate_removes_all_by_default() -> None:
-    await events.publish("orders", {"n": 1})
-    await events.publish("orders", {"n": 2})
-    await events.publish("orders", {"n": 3})
+    await events.publish("orders", "ev", {"n": 1})
+    await events.publish("orders", "ev", {"n": 2})
+    await events.publish("orders", "ev", {"n": 3})
     removed = await streams.truncate("orders")
     assert removed == 3
     assert await streams.peek("orders") == []
@@ -96,7 +96,7 @@ async def test_truncate_removes_all_by_default() -> None:
 
 async def test_truncate_keeps_newest() -> None:
     for n in range(5):
-        await events.publish("orders", {"n": n})
+        await events.publish("orders", "ev", {"n": n})
     removed = await streams.truncate("orders", keep=2)
     assert removed == 3
     kept = await streams.peek("orders")
@@ -112,7 +112,7 @@ async def test_truncate_unknown_stream_raises() -> None:
 
 
 async def test_delete_stream_without_subscriptions() -> None:
-    await events.publish("orders", {"n": 1})
+    await events.publish("orders", "ev", {"n": 1})
     await streams.delete("orders")
     assert "orders" not in await streams.list_()
 

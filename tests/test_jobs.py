@@ -84,8 +84,8 @@ async def test_create_persists_initial_state_and_runs_enter() -> None:
     # ENTER ran send → an event landed on `outbound`.
     events_on_stream = await streams.peek("outbound")
     assert len(events_on_stream) == 1
+    assert events_on_stream[0]["name"] == "greet"
     payload = events_on_stream[0]["payload"]
-    assert payload["_event"] == "greet"
     assert payload["who"] == "alice"
     assert payload["job"] == job["id"]
 
@@ -335,13 +335,13 @@ async def test_cancel_terminal_is_noop() -> None:
 
 
 async def test_worker_can_consume_what_create_emitted() -> None:
-    """A subscription on `outbound` receives the greet emit, payload tagged."""
+    """A subscription on `outbound` receives the greet emit, job tagged."""
     await _register()
     await subscriptions.create("worker", "outbound")
     job = await jobs.create("test-flow", {"target": "alice"})
     event = await events.pull("worker", wait=0)
     assert event is not None
-    assert event["payload"]["_event"] == "greet"
+    assert event["name"] == "greet"
     assert event["payload"]["_job"] == job["id"]
     assert event["payload"]["who"] == "alice"
 

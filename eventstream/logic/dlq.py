@@ -45,7 +45,7 @@ async def move(subscription: str, stream: str, event: dict) -> None:
     blob = {
         "id": event["id"],
         "stream": stream,
-        "key": event.get("key"),
+        "name": event.get("name", ""),
         "payload": event["payload"],
         "ts": event["ts"],
         "delivery_count": event["delivery_count"],

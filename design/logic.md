@@ -71,11 +71,13 @@ eventstream/logic/
 ### `events.py`
 
 ```python
-def publish(stream: str, payload: dict, *,
-            key: str | None = None,
+def publish(stream: str, name: str, payload: dict, *,
             idempotency_key: str | None = None,
             deliver_at: datetime | None = None) -> dict:
     """Append (sync) or schedule (future) an event.
+
+    `name` is the event type — required, so one stream can carry many
+    kinds of event that consumers switch on.
 
     Returns {"id": "evt_..."} for synchronous publish,
             {"schedule_id": "sch_..."} when deliver_at is in the future.
@@ -85,7 +87,7 @@ async def pull(subscription: str,
                wait: timedelta = timedelta(seconds=30)) -> dict | None:
     """Long-poll one event. None on timeout.
 
-    Returns {"id", "key", "payload", "ts"} on success.
+    Returns {"id", "name", "payload", "ts"} on success.
     """
 
 def ack(subscription: str, event_id: str) -> None:
