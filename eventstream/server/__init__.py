@@ -72,15 +72,15 @@ def build(port: int | None = None) -> meander.server.Server:
     return server
 
 
-def run(*, port: int | None = None) -> None:
+def run(*, port: int | None = None, sweep: bool = True) -> None:
     """Build the server and block, serving requests forever.
 
-    When ``CONFIG.sweep_interval`` is positive, also runs the job-timer
-    sweeper as a meander background task so timers fire without a separate
-    ``eventstream jobs sweep`` process.
+    Unless ``sweep`` is false (``--no-sweep``) or ``CONFIG.sweep_interval``
+    is ``0``, also runs the job-timer sweeper as a meander background task,
+    so due timers fire without a separate ``eventstream jobs sweep`` process.
     """
     CONFIG.configure_logging()
     build(port=port)
-    if CONFIG.sweep_interval > 0:
+    if sweep and CONFIG.sweep_interval > 0:
         meander.add_task(lambda: jobs.sweep_forever(CONFIG.sweep_interval))
     meander.run()

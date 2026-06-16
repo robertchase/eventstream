@@ -2,6 +2,10 @@
 
 import inspect
 
+import pytest
+
+import eventstream.server as server_pkg
+from eventstream import config as CONFIG
 from eventstream.server import build, routes
 
 
@@ -52,3 +56,37 @@ def test_catalog_is_built_and_paths_are_prettified() -> None:
     by_path = {(r["method"], r["path"]): r for r in routes.CATALOG}
     assert by_path[("POST", "/v1/streams/{stream}/events")]["scope"] == "write"
     assert by_path[("POST", "/v1/subscriptions")]["scope"] == "admin"
+
+
+@pytest.fixture
+def _stub_meander(monkeypatch: pytest.MonkeyPatch) -> list:
+    """Stub out the blocking/build parts of ``run`` and record sweeper tasks."""
+    tasks: list = []
+    monkeypatch.setattr(server_pkg, "build", lambda **kw: None)
+    monkeypatch.setattr(server_pkg.meander, "add_task", lambda fn: tasks.append(fn))
+    monkeypatch.setattr(server_pkg.meander, "run", lambda: None)
+    return tasks
+
+
+def test_run_registers_sweeper_by_default(
+    monkeypatch: pytest.MonkeyPatch, _stub_meander: list
+) -> None:
+    monkeypatch.setattr(CONFIG, "sweep_interval", 1.0)
+    server_pkg.run()
+    assert len(_stub_meander) == 1
+
+
+def test_run_no_sweep_skips_sweeper(
+    monkeypatch: pytest.MonkeyPatch, _stub_meander: list
+) -> None:
+    monkeypatch.setattr(CONFIG, "sweep_interval", 1.0)
+    server_pkg.run(sweep=False)
+    assert _stub_meander == []
+
+
+def test_run_zero_interval_skips_sweeper(
+    monkeypatch: pytest.MonkeyPatch, _stub_meander: list
+) -> None:
+    monkeypatch.setattr(CONFIG, "sweep_interval", 0.0)
+    server_pkg.run(sweep=True)
+    assert _stub_meander == []

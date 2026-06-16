@@ -121,8 +121,9 @@ ACTION arm-timeout
 ```
 
 Durations are `<n>s`, `<n>m`, `<n>h`, or `<n>d`. Timers fire only when a
-sweeper is running (`eventstream jobs sweep`, or set `EVENTSTREAM_SWEEP_INTERVAL`
-on the server).
+sweeper is running. The `eventstream server` runs one by default (every 1s;
+tune with `EVENTSTREAM_SWEEP_INTERVAL`, disable with `--no-sweep`); without
+the server, run a standalone `eventstream jobs sweep`.
 
 ### States
 
@@ -231,7 +232,8 @@ eventstream ack payments-worker <event-id> --outcome charged --data '{"txn_id":"
 # inspect the job (state, context, transition history)
 eventstream jobs show <job-id>
 
-# fire due timers (run continuously in production)
+# fire due timers — the server does this by default; this is the standalone
+# sweeper for when you aren't running the server (or used --no-sweep)
 eventstream jobs sweep --interval 1
 ```
 

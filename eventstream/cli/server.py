@@ -13,10 +13,20 @@ from eventstream.server import run
 
 @click.command()
 @click.option("--port", type=int, default=None, help="Override the bind port.")
-def server(port: int | None) -> None:
+@click.option(
+    "--sweep/--no-sweep",
+    default=True,
+    show_default=True,
+    help="Run the background job-timer sweeper.",
+)
+def server(port: int | None, sweep: bool) -> None:
     """Start the HTTP admin / API server (blocks)."""
     actual = port if port is not None else CONFIG.http_port
     click.echo(f"eventstream server listening on :{actual}", err=True)
+    if sweep and CONFIG.sweep_interval > 0:
+        click.echo(f"timer sweep: every {CONFIG.sweep_interval}s", err=True)
+    else:
+        click.echo("timer sweep: OFF", err=True)
     if CONFIG.auth:
         click.echo("auth: ON — /v1/* requires a bearer token", err=True)
         # Fail-closed: with auth on and no keys, every request is rejected.
@@ -26,4 +36,4 @@ def server(port: int | None) -> None:
                 "rejected. Create one with `eventstream key create`.",
                 err=True,
             )
-    run(port=port)
+    run(port=port, sweep=sweep)
