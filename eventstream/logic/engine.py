@@ -87,13 +87,20 @@ def step(
     trigger_event: dict,
     *,
     recorder: Recorder,
+    job_meta: dict | None = None,
 ) -> str:
     """Process one trigger event, cascading until quiesce or terminal.
 
     ``context`` is mutated in place by ``SET`` actions. Returns the final
     state name. Raises :class:`CascadeBudgetExceeded` if internal events
     fail to converge.
+
+    ``job_meta`` carries the static ``$job`` fields (``workflow``,
+    ``version``, ``now``); ``id`` falls back to the recorder's job id and
+    ``state`` is supplied per action from the state it runs in. Omit it for
+    direct engine use where only ``$job.id`` is referenced.
     """
+    meta = job_meta or {}
     event = trigger_event
     cascades = 0
 
@@ -109,7 +116,15 @@ def step(
         if handler is None:
             return state
 
-        carry = _run_actions(handler["do"], ast, context, event, recorder, initial=None)
+        carry = _run_actions(
+            handler["do"],
+            ast,
+            context,
+            event,
+            recorder,
+            initial=None,
+            job=_job_scope(recorder, meta, state),
+        )
         target = handler.get("goto")
 
         if target:
@@ -121,6 +136,7 @@ def step(
                 event,
                 recorder,
                 initial=carry,
+                job=_job_scope(recorder, meta, state),
             )
             state = target
             carry = _run_actions(
@@ -130,6 +146,7 @@ def step(
                 event,
                 recorder,
                 initial=carry,
+                job=_job_scope(recorder, meta, state),
             )
             if ast["states"][state].get("terminal"):
                 return state
@@ -138,6 +155,17 @@ def step(
             return state
 
         event = carry
+
+
+def _job_scope(recorder: Recorder, meta: dict, state: str) -> dict:
+    """Build the ``$job`` reference scope for actions running in ``state``.
+
+    ``id`` defaults to the recorder's job id so direct engine use still
+    resolves ``$job.id``; ``meta`` (workflow, version, now) overlays the
+    rest; ``state`` reflects the state the action executes in (source state
+    for ``do``/``exit``, target state for ``enter``).
+    """
+    return {"id": recorder.job_id, **meta, "state": state}
 
 
 def _find_handler(ast: dict, state: str, event_name: str) -> dict | None:
@@ -159,6 +187,7 @@ def _run_actions(
     recorder: Recorder,
     *,
     initial,
+    job: dict,
 ):
     """Execute a list of action refs in order; return the LAST action's result.
 
@@ -168,16 +197,19 @@ def _run_actions(
     """
     carry = initial
     for ref in refs:
-        carry = _execute_action(ast["actions"][ref], ast, context, event, recorder)
+        carry = _execute_action(ast["actions"][ref], ast, context, event, recorder, job)
     return carry
 
 
 def _execute_action(
-    action: dict, ast: dict, context: dict, event: dict, recorder: Recorder
+    action: dict, ast: dict, context: dict, event: dict, recorder: Recorder, job: dict
 ):
-    """Execute one action; return its carry (EMIT) or ``None`` (SET/LOG/TIMER)."""
+    """Execute one action against the ``job``/``context``/``event`` scopes.
+
+    Returns its carry (EMIT) or ``None`` (SET/LOG/TIMER). ``job`` is the
+    ``$job`` reference scope built by :func:`_job_scope`.
+    """
     op = action["type"]
-    job = {"id": recorder.job_id}
 
     if op == "emit":
         payload = {

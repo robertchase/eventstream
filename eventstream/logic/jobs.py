@@ -43,6 +43,7 @@ import json
 import logging
 import secrets
 import time
+from datetime import UTC, datetime
 
 from eventstream.logic import backend, engine, events, workflows
 from eventstream.logic.exceptions import EventStreamError
@@ -83,6 +84,15 @@ def _new_job_id() -> str:
     return f"job_{secrets.token_hex(8)}"
 
 
+def _iso(epoch_seconds: int) -> str:
+    """Render a unix timestamp as an ISO 8601 UTC string for ``$job.now``.
+
+    Derived from the same tick used for the job's stored timestamps, so
+    ``$job.now`` agrees with ``created_at``/``updated_at`` to the second.
+    """
+    return datetime.fromtimestamp(epoch_seconds, tz=UTC).isoformat()
+
+
 async def create(
     workflow_name: str,
     context: dict | None = None,
@@ -98,19 +108,27 @@ async def create(
 
     job_id = _new_job_id()
     recorder = engine.Recorder(job_id)
+    now = int(time.time())
+    job_meta = {
+        "workflow": ast["name"],
+        "version": wf["version"],
+        "now": _iso(now),
+    }
 
     enter_refs = ast["states"][initial_state].get("enter", [])
     carry = None
+    job = engine._job_scope(recorder, job_meta, initial_state)
     for ref in enter_refs:
         carry = engine._execute_action(
-            ast["actions"][ref], ast, context, {"name": "_create"}, recorder
+            ast["actions"][ref], ast, context, {"name": "_create"}, recorder, job
         )
     state = initial_state
     if carry is not None:
-        state = engine.step(ast, state, context, carry, recorder=recorder)
+        state = engine.step(
+            ast, state, context, carry, recorder=recorder, job_meta=job_meta
+        )
 
     status = "terminal" if ast["states"][state].get("terminal") else "running"
-    now = int(time.time())
 
     await _persist_create(
         job_id, workflow_name, wf["version"], state, context, status, now, recorder
@@ -184,10 +202,18 @@ async def advance(job_id: str, event_name: str, data: dict | None = None) -> dic
     context = job["context"]
     recorder = engine.Recorder(job_id)
     event = {"name": event_name, "data": data or {}}
-    new_state = engine.step(ast, job["state"], context, event, recorder=recorder)
+    now = int(time.time())
+    job_meta = {
+        "workflow": job["workflow"],
+        "version": job["version"],
+        "now": _iso(now),
+    }
+    new_state = engine.step(
+        ast, job["state"], context, event, recorder=recorder, job_meta=job_meta
+    )
 
     status = "terminal" if ast["states"][new_state].get("terminal") else "running"
-    await _persist_update(job_id, new_state, context, status, recorder)
+    await _persist_update(job_id, new_state, context, status, recorder, now)
     return await get(job_id)
 
 
@@ -350,9 +376,8 @@ async def _persist_create(
     await _flush_side_effects(client, job_id, recorder, now, current_state=state)
 
 
-async def _persist_update(job_id, state, context, status, recorder):
+async def _persist_update(job_id, state, context, status, recorder, now):
     client = backend.client()
-    now = int(time.time())
     await client.hset(
         _job_key(job_id),
         mapping={

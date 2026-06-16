@@ -155,9 +155,14 @@ Values in `PAYLOAD`, `SET`, and `LOG` are either literals or `$`-references:
 
 | Reference | Resolves to |
 |---|---|
-| `$job.id` | the job's id (the only job field exposed today) |
+| `$job.<field>` | job metadata: `id`, `workflow`, `version`, `state`, `now` |
 | `$context.<path>` | a dotted path into the job's context |
 | `$event.<path>` | the triggering event's body — e.g. `$event.data.txn_id` |
+
+The `$job` fields are: `id` (the job id), `workflow` (its workflow name),
+`version` (the workflow version), `state` (the state the action runs in — the
+source state for `EVENT`/`EXIT`, the target state for `ENTER`), and `now` (an
+ISO 8601 UTC timestamp captured once per step).
 
 Anything not starting with `$` is a literal string. There are **no
 expressions** — no arithmetic, conditionals, or function calls; references and
@@ -166,7 +171,7 @@ literals only. A reference to a missing path fails the step (the job takes its
 
 Note `$event` only has meaning inside an `EVENT` handler. `ENTER`/`EXIT`
 actions run without a triggering event, so they should reference `$context`
-and `$job.id` only.
+and `$job` only.
 
 ## How a job runs (the mental model)
 
@@ -220,5 +225,5 @@ current state.
   can't tell an action *definition* from a *reference*; it reports the line.
 - **Only the last action in a sequence carries an event** to the FSM.
 - **Terminal states take no events** — listing one is a parse error.
-- **`ENTER`/`EXIT` have no `$event`** — reference `$context` / `$job.id` only.
+- **`ENTER`/`EXIT` have no `$event`** — reference `$context` / `$job` only.
 - **No expressions** — branching is by event name, not by condition.

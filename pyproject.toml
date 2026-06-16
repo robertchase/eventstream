@@ -1,6 +1,6 @@
 [project]
 name = "eventstream"
-version = "0.15.0"
+version = "0.16.0"
 description = "A pull-based application event bus."
 requires-python = ">=3.12"
 dependencies = [

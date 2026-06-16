@@ -226,3 +226,63 @@ STATE done TERMINAL
     assert rec.logs == ["hello world"]
     step(wf, "s", context, {"name": "b", "data": {}}, recorder=rec)
     assert rec.timers == [{"event": "timeout", "delay_seconds": 30}]
+
+
+# ---- $job scope ------------------------------------------------------------
+
+_SCOPE = _wf("""\
+NAME flow
+INITIAL start
+
+ACTION snap-do
+  EMIT audit do
+  PAYLOAD st $job.state
+
+ACTION snap-enter
+  EMIT audit enter
+  PAYLOAD id  $job.id
+  PAYLOAD wf  $job.workflow
+  PAYLOAD ver $job.version
+  PAYLOAD st  $job.state
+  PAYLOAD at  $job.now
+
+STATE start
+  EVENT go next
+    ACTION snap-do
+
+STATE next
+  ENTER
+    ACTION snap-enter
+
+STATE done TERMINAL
+""")
+
+
+def test_step_exposes_full_job_scope_with_state_per_phase() -> None:
+    """`$job.*` resolves; state is the source for `do`, the target for `enter`."""
+    rec = Recorder("j_1")
+    final = step(
+        _SCOPE,
+        "start",
+        {},
+        {"name": "go", "data": {}},
+        recorder=rec,
+        job_meta={"workflow": "flow", "version": 3, "now": "2026-06-15T00:00:00+00:00"},
+    )
+    assert final == "next"
+    do_emit, enter_emit = rec.emits
+    assert do_emit["payload"]["st"] == "start"  # `do` runs in the source state
+    assert enter_emit["payload"] == {
+        "id": "j_1",  # falls back to the recorder's job id
+        "wf": "flow",
+        "ver": 3,
+        "st": "next",  # `enter` runs in the target state
+        "at": "2026-06-15T00:00:00+00:00",
+    }
+
+
+def test_job_field_absent_without_meta_raises() -> None:
+    """Without job_meta only `$job.id` is in scope; other fields fail the step."""
+    rec = Recorder("j_1")
+    with pytest.raises(MissingReference):
+        step(_SCOPE, "start", {}, {"name": "go", "data": {}}, recorder=rec)

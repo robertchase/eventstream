@@ -346,6 +346,37 @@ async def test_worker_can_consume_what_create_emitted() -> None:
     assert event["payload"]["who"] == "alice"
 
 
+_WF_JOB_SCOPE = """\
+NAME    scope-flow
+INITIAL waiting
+
+ACTION snapshot
+  EMIT outbound snap
+  PAYLOAD wf  $job.workflow
+  PAYLOAD ver $job.version
+  PAYLOAD st  $job.state
+  PAYLOAD at  $job.now
+
+STATE waiting
+  ENTER
+    ACTION snapshot
+
+STATE done TERMINAL
+"""
+
+
+async def test_create_emits_expose_full_job_scope() -> None:
+    """create() wires workflow/version/state/now into the `$job` scope."""
+    await workflows.register(_WF_JOB_SCOPE)
+    job = await jobs.create("scope-flow")
+    snap = (await streams.peek("outbound"))[0]["payload"]
+    assert snap["wf"] == "scope-flow"
+    assert snap["ver"] == 1
+    assert snap["st"] == "waiting"
+    assert isinstance(snap["at"], str) and "T" in snap["at"]
+    assert snap["_job"] == job["id"]
+
+
 # ---- ack-with-outcome routing --------------------------------------------
 
 
