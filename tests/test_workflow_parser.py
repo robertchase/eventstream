@@ -330,3 +330,77 @@ def test_default_with_actions_and_transition() -> None:
         "STATE end TERMINAL\n"
     )
     assert wf["defaults"]["error"] == {"do": ["log-it"], "goto": "end"}
+
+
+# ---- inline LOG (no named ACTION) -------------------------------------------
+
+
+def test_inline_log_under_event() -> None:
+    """A bare LOG under EVENT becomes an inline log action in the do-list."""
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "STATE s\n"
+        "  EVENT go end\n"
+        "    LOG handling $event.data.id\n"
+        "STATE end TERMINAL\n"
+    )
+    assert wf["states"]["s"]["events"]["go"] == {
+        "do": [{"type": "log", "message": "handling $event.data.id"}],
+        "goto": "end",
+    }
+
+
+def test_inline_log_under_default() -> None:
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "DEFAULT error end\n"
+        "  LOG unhandled $event.name\n"
+        "STATE s\n  EVENT go end\n"
+        "STATE end TERMINAL\n"
+    )
+    assert wf["defaults"]["error"] == {
+        "do": [{"type": "log", "message": "unhandled $event.name"}],
+        "goto": "end",
+    }
+
+
+def test_inline_log_mixes_with_action_refs_in_order() -> None:
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "ACTION fan\n  EMIT out go\n"
+        "STATE s\n"
+        "  EVENT go s\n"
+        "    ACTION fan\n"
+        "    LOG fanned out\n"
+        "STATE end TERMINAL\n"
+    )
+    assert wf["states"]["s"]["events"]["go"]["do"] == [
+        "fan",
+        {"type": "log", "message": "fanned out"},
+    ]
+
+
+def test_inline_log_without_transition() -> None:
+    """No next-state is fine — the handler just logs and stays put."""
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "STATE s\n"
+        "  EVENT ping\n"
+        "    LOG pinged\n"
+        "STATE end TERMINAL\n"
+    )
+    assert wf["states"]["s"]["events"]["ping"] == {
+        "do": [{"type": "log", "message": "pinged"}],
+        "goto": None,
+    }
+
+
+def test_inline_log_under_enter_is_rejected() -> None:
+    with pytest.raises(ParseError, match="inline LOG is only allowed under EVENT"):
+        parse(
+            "NAME w\nINITIAL s\n"
+            "STATE s\n"
+            "  ENTER\n"
+            "    LOG starting\n"
+            "STATE end TERMINAL\n"
+        )

@@ -139,9 +139,21 @@ STATE charging
 STATE done TERMINAL      # terminal states end the job; they take no events
 ```
 
-Inside `ENTER`, `EXIT`, and `EVENT`, the only directive is `ACTION <name>` —
+Inside `ENTER`, `EXIT`, and `EVENT`, the main directive is `ACTION <name>` —
 a reference to an action defined at the top. References only; no inline emits
 and no per-reference overrides (define a second action if you need a variant).
+
+The exception is `LOG`: a bare `LOG <message>` line can go straight inside an
+`EVENT` or `DEFAULT` handler — no named action required — to annotate a
+transition. It can be the handler's only directive or sit among `ACTION`
+references. (Inline `LOG` is not allowed under `ENTER`/`EXIT`; `EMIT`/`SET`/
+`TIMER` always need a named `ACTION`.)
+
+```
+STATE working
+  EVENT retry working
+    LOG retrying after transient failure
+```
 
 ### DEFAULT
 

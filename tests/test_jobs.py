@@ -215,6 +215,42 @@ async def test_log_lines_recorded_in_history_in_order() -> None:
     assert hist[-1]["from"] == "waiting" and hist[-1]["to"] == "done"
 
 
+_WF_INLINE_LOG = """\
+NAME    inline-log-flow
+INITIAL working
+
+ACTION fan
+  EMIT internal relay
+
+STATE working
+  EVENT step working
+    ACTION fan
+    LOG handled step, relaying
+  EVENT relay done
+
+STATE done TERMINAL
+"""
+
+
+async def test_inline_log_under_event_runs_and_is_transparent() -> None:
+    """An inline LOG under EVENT records to history and leaves the carry
+    intact, so the preceding EMIT's event still cascades."""
+    await workflows.register(_WF_INLINE_LOG)
+    job = await jobs.create("inline-log-flow")
+    advanced = await jobs.advance(job["id"], "step", {})
+
+    # `fan` emitted `relay`; the inline LOG didn't clear the carry, so `relay`
+    # cascaded working -> done.
+    assert advanced["state"] == "done"
+    hist = await jobs.history(job["id"])
+    assert [(e["kind"], e.get("message") or e.get("event")) for e in hist] == [
+        ("log", "handled step, relaying"),
+        ("transition", "step"),
+        ("transition", "relay"),
+    ]
+    assert hist[0]["state"] == "working"
+
+
 # ---- cancel ---------------------------------------------------------------
 
 

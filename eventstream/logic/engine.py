@@ -209,11 +209,21 @@ def _run_actions(
     """
     carry = initial
     for ref in refs:
-        action = ast["actions"][ref]
+        action = resolve_action(ast, ref)
         result = _execute_action(action, ast, context, event, recorder, job)
         if action["type"] != "log":
             carry = result
     return carry
+
+
+def resolve_action(ast: dict, ref) -> dict:
+    """Resolve a ``do``-list entry to its action dict.
+
+    Entries are usually action *names* (defined in ``ast["actions"]``), but
+    an EVENT/DEFAULT handler may carry an inline ``LOG`` as a literal action
+    dict — return it as-is.
+    """
+    return ref if isinstance(ref, dict) else ast["actions"][ref]
 
 
 def _execute_action(

@@ -114,10 +114,17 @@ Inside `STATE name`, the following sub-directives open handler scopes:
 | `EXIT` | none | Open the exit-handler scope. Same pattern as `ENTER`. |
 | `EVENT <name> [<next-state>]` | event + optional state | Open a handler for `<name>`. Optional trailing state is the transition target. |
 
-Within `ENTER` / `EXIT` / `EVENT`, the only valid sub-directive is `ACTION
+Within `ENTER` / `EXIT` / `EVENT`, the primary sub-directive is `ACTION
 <ref>` — a reference to a named action defined at top level. **No
 overrides; no inline emits.** Variants of an action are separate
 definitions.
+
+The one inline exception is `LOG`: a bare `LOG <message>` line may appear
+directly inside an `EVENT` (or `DEFAULT`) handler without a named action —
+handy for annotating a transition without the ceremony of defining one. It
+may be the handler's only directive or sit among `ACTION` references, in
+order. Inline `LOG` is *not* allowed under `ENTER`/`EXIT` (define a named
+action there). `EMIT`/`SET`/`TIMER` always require a named `ACTION`.
 
 Terminal states (`STATE done TERMINAL`) have no inner content — any
 `ENTER`/`EXIT`/`EVENT` inside a terminal state is a parse error.
@@ -218,10 +225,15 @@ DEFAULT heartbeat
 # with actions and transition
 DEFAULT error failed
   ACTION log-failure
+
+# inline LOG, no named action needed
+DEFAULT error failed
+  LOG job failed on $event.name
 ```
 
 The most common use is `DEFAULT error failed` — every state's unhandled
-errors fall through to a terminal failed state.
+errors fall through to a terminal failed state. As under `EVENT`, a bare
+`LOG <message>` may stand in for a named action here.
 
 ## Carry rule (evaluation semantics)
 

@@ -116,12 +116,15 @@ async def create(
     }
 
     enter_refs = ast["states"][initial_state].get("enter", [])
-    carry = None
-    job = engine._job_scope(recorder, job_meta, initial_state)
-    for ref in enter_refs:
-        carry = engine._execute_action(
-            ast["actions"][ref], ast, context, {"name": "_create"}, recorder, job
-        )
+    carry = engine._run_actions(
+        enter_refs,
+        ast,
+        context,
+        {"name": "_create"},
+        recorder,
+        initial=None,
+        job=engine._job_scope(recorder, job_meta, initial_state),
+    )
     state = initial_state
     if carry is not None:
         state = engine.step(
