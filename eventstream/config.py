@@ -44,13 +44,18 @@ guarded by a scope check — see ``design/auth.md``. Manage keys with
 """
 
 sweep_interval: float = float(os.environ.get("EVENTSTREAM_SWEEP_INTERVAL", "1"))
-"""How often (seconds) the HTTP server sweeps job timers in the background.
+"""Idle re-check interval (seconds) for the background job-timer sweeper.
 
 The in-server sweeper fires due job timers so workflows advance without a
-separate ``eventstream jobs sweep`` process. On by default at a 1s cadence;
-change the interval with ``EVENTSTREAM_SWEEP_INTERVAL``, or set it to ``0``
-(equivalently, pass ``--no-sweep`` to ``eventstream server``) to disable the
-in-server sweeper and run the standalone sweeper instead.
+separate ``eventstream jobs sweep`` process. It sleeps until the *next*
+pending timer is due (waking early when an earlier timer is armed in this
+process), so this is not a poll cadence — it only bounds the wait when *no*
+timers are pending, i.e. how long until a timer armed by another process
+(e.g. a CLI ``jobs create``) is noticed.
+
+On by default at 1s; change it with ``EVENTSTREAM_SWEEP_INTERVAL``, or set
+it to ``0`` (equivalently, pass ``--no-sweep`` to ``eventstream server``) to
+disable the in-server sweeper and run the standalone sweeper instead.
 """
 
 log_level: str | None = os.environ.get("EVENTSTREAM_LOG_LEVEL") or None

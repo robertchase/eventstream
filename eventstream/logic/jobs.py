@@ -53,6 +53,12 @@ _TIMERS = "eventstream:job_timers"
 
 _sweep_log = logging.getLogger("eventstream.jobs")
 
+# Set by a running in-process sweeper (see ``sweep_forever``) so timer arming
+# in the same process can wake it early. ``None`` when no sweeper runs here
+# (e.g. a plain CLI ``jobs create``), in which case arming just persists the
+# timer and any sweeper in another process picks it up on its own schedule.
+_timer_armed: asyncio.Event | None = None
+
 EMIT_MAP_TTL_SECONDS = 24 * 60 * 60  # 1 day; old entries auto-evict
 
 
@@ -312,14 +318,24 @@ async def handle_dead(event_id: str) -> dict | None:
     )
 
 
-async def sweep_forever(interval: float, *, iterations: int | None = None) -> None:
-    """Call :func:`tick` every ``interval`` seconds, forever.
+async def sweep_forever(idle_interval: float, *, iterations: int | None = None) -> None:
+    """Fire due timers, then sleep until the *next* timer is due — forever.
+
+    Rather than polling on a fixed cadence, each pass fires everything due
+    (:func:`tick`) and then sleeps exactly until the earliest pending timer's
+    fire-time. Arming an earlier timer in this same process wakes the sleep
+    immediately (see :func:`_maybe_wake_sweeper`); a later one leaves it
+    waiting. When no timers are pending it waits up to ``idle_interval`` (a
+    bounded re-check so timers armed by *other* processes — e.g. a CLI
+    ``jobs create`` — are still noticed; in-process arming is always prompt).
 
     The loop never raises: a failing tick is logged and the loop continues,
     so this is safe to register as a meander background task (a raising task
     would cancel the server's task group). ``iterations`` bounds the loop for
     tests; ``None`` means run until cancelled.
     """
+    global _timer_armed
+    _timer_armed = asyncio.Event()
     count = 0
     while iterations is None or count < iterations:
         try:
@@ -327,7 +343,51 @@ async def sweep_forever(interval: float, *, iterations: int | None = None) -> No
         except Exception:  # noqa: BLE001 - a bad tick must not kill the sweeper
             _sweep_log.exception("timer sweep failed; continuing")
         count += 1
-        await asyncio.sleep(interval)
+        if iterations is not None and count >= iterations:
+            break
+        await _wait_for_next(idle_interval)
+
+
+async def _wait_for_next(idle_interval: float) -> None:
+    """Block until the earliest pending timer is due, or woken early.
+
+    Returns when (a) the next timer's fire-time arrives, (b) an earlier timer
+    is armed in this process and signals :data:`_timer_armed`, or (c) — only
+    when nothing is pending — ``idle_interval`` elapses. Clearing the event
+    *before* reading the head avoids missing a wake armed concurrently.
+    """
+    _timer_armed.clear()
+    next_at = await _next_timer_at()
+    if next_at is None:
+        timeout = idle_interval
+    else:
+        timeout = max(0.0, next_at - time.time())
+    if timeout <= 0:
+        return
+    try:
+        await asyncio.wait_for(_timer_armed.wait(), timeout=timeout)
+    except TimeoutError:
+        pass
+
+
+async def _next_timer_at() -> float | None:
+    """Fire-time (unix seconds) of the earliest pending timer, or ``None``."""
+    head = await backend.client().zrange(_TIMERS, 0, 0, withscores=True)
+    return float(head[0][1]) if head else None
+
+
+async def _maybe_wake_sweeper(earliest_armed: int) -> None:
+    """Wake an in-process sweeper if a just-armed timer is now the head.
+
+    A no-op when no sweeper runs in this process, when one is already
+    signalled, or when the armed timer sits behind an earlier pending one
+    (the sweeper is already waiting on something at least as soon).
+    """
+    if _timer_armed is None or _timer_armed.is_set():
+        return
+    head = await _next_timer_at()
+    if head is not None and earliest_armed <= head:
+        _timer_armed.set()
 
 
 async def tick() -> dict:
@@ -412,6 +472,7 @@ async def _flush_side_effects(client, job_id, recorder, now, *, current_state):
         )
         await client.expire(_emitted_key(event_id), EMIT_MAP_TTL_SECONDS)
 
+    earliest_armed: int | None = None
     for timer in recorder.timers:
         fire_at = now + int(timer["delay_seconds"])
         member = json.dumps(
@@ -422,3 +483,9 @@ async def _flush_side_effects(client, job_id, recorder, now, *, current_state):
             }
         )
         await client.zadd(_TIMERS, {member: fire_at})
+        earliest_armed = (
+            fire_at if earliest_armed is None else min(earliest_armed, fire_at)
+        )
+
+    if earliest_armed is not None:
+        await _maybe_wake_sweeper(earliest_armed)

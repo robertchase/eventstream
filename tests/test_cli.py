@@ -48,7 +48,7 @@ def test_server_sweeps_by_default(_captured_run: dict) -> None:
     result = CliRunner().invoke(cli, ["server"])
     assert result.exit_code == 0
     assert _captured_run["sweep"] is True
-    assert "timer sweep: every" in result.output
+    assert "timer sweep: ON" in result.output
 
 
 def test_server_no_sweep_flag_disables_sweeper(_captured_run: dict) -> None:

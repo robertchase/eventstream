@@ -7,7 +7,25 @@ import asyncio
 import pytest
 
 from eventstream import config as CONFIG
-from eventstream.logic import dlq, events, jobs, streams, subscriptions, workflows
+from eventstream.logic import (
+    backend,
+    dlq,
+    events,
+    jobs,
+    streams,
+    subscriptions,
+    workflows,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_timer_armed():
+    """Isolate the module-global sweeper signal between tests."""
+    saved = jobs._timer_armed
+    jobs._timer_armed = None
+    yield
+    jobs._timer_armed = saved
+
 
 _WF_SOURCE = """\
 NAME    test-flow
@@ -423,6 +441,58 @@ async def test_sweep_forever_fires_a_real_timer(
     job = await jobs.create("timed-flow")
     await asyncio.sleep(1.2)
     await jobs.sweep_forever(0, iterations=1)
+    assert (await jobs.get(job["id"]))["state"] == "end"
+
+
+async def test_next_timer_at_reports_the_head() -> None:
+    assert await jobs._next_timer_at() is None
+    await workflows.register(_WF_WITH_TIMER)
+    await jobs.create("timed-flow")  # ENTER arms TIMER 1s
+    head = await jobs._next_timer_at()
+    assert head is not None and head > 0
+
+
+async def test_arming_head_timer_wakes_in_process_sweeper() -> None:
+    """A timer that becomes the head signals an in-process sweeper."""
+    jobs._timer_armed = asyncio.Event()
+    await workflows.register(_WF_WITH_TIMER)
+    await jobs.create("timed-flow")
+    assert jobs._timer_armed.is_set()
+
+
+async def test_arming_later_timer_leaves_sweeper_waiting() -> None:
+    """A timer behind an earlier pending one must not wake the sweeper."""
+    jobs._timer_armed = asyncio.Event()
+    # An earlier timer already sits at the head (score 1 → epoch 1970).
+    await backend.client().zadd(
+        jobs._TIMERS, {'{"job_id": "x", "event": "e", "nonce": "n"}': 1}
+    )
+    await workflows.register(_WF_WITH_TIMER)
+    await jobs.create("timed-flow")  # arms now+1s, far behind the head
+    assert not jobs._timer_armed.is_set()
+
+
+async def test_arming_timer_without_sweeper_is_a_noop() -> None:
+    """No sweeper in this process → arming just persists; no crash."""
+    assert jobs._timer_armed is None  # the autouse fixture cleared it
+    await workflows.register(_WF_WITH_TIMER)
+    await jobs.create("timed-flow")
+    assert jobs._timer_armed is None
+
+
+async def test_running_sweeper_wakes_for_an_in_process_timer() -> None:
+    """End to end: a sweeper parked on a long idle wait still fires a timer
+    armed after it started, because arming wakes it."""
+    await workflows.register(_WF_WITH_TIMER)  # ENTER arms TIMER 1s → end
+    # Long idle interval: without the wake, the sweeper would sleep ~1000s and
+    # the timer would never fire within this test.
+    task = asyncio.create_task(jobs.sweep_forever(1000.0))
+    await asyncio.sleep(0.05)  # let the sweeper reach its idle wait
+    job = await jobs.create("timed-flow")  # arms the timer → wakes the sweeper
+    await asyncio.sleep(1.3)  # 1s timer + margin
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert (await jobs.get(job["id"]))["state"] == "end"
 
 

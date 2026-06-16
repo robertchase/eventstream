@@ -24,7 +24,11 @@ def server(port: int | None, sweep: bool) -> None:
     actual = port if port is not None else CONFIG.http_port
     click.echo(f"eventstream server listening on :{actual}", err=True)
     if sweep and CONFIG.sweep_interval > 0:
-        click.echo(f"timer sweep: every {CONFIG.sweep_interval}s", err=True)
+        click.echo(
+            f"timer sweep: ON (sleeps until the next timer; "
+            f"idle re-check {CONFIG.sweep_interval}s)",
+            err=True,
+        )
     else:
         click.echo("timer sweep: OFF", err=True)
     if CONFIG.auth:
