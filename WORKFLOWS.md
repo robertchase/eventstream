@@ -230,7 +230,9 @@ current state.
 
 - **Action definitions go before `STATE`/`DEFAULT`.** Otherwise the parser
   can't tell an action *definition* from a *reference*; it reports the line.
-- **Only the last action in a sequence carries an event** to the FSM.
+- **Only the last action in a sequence carries an event** to the FSM — but
+  `LOG` is transparent: drop it anywhere (even last) and the carry is
+  unaffected. `SET`/`TIMER` still clear the carry when last.
 - **Terminal states take no events** — listing one is a parse error.
 - **`ENTER`/`EXIT` have no `$event`** — reference `$context` / `$job` only.
 - **No expressions** — branching is by event name, not by condition.

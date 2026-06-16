@@ -9,11 +9,14 @@ afterward. No I/O happens here.
 Evaluation semantics (per ``design/workflow-format.md``):
 
 * Run the matched handler's action sequence in order. Track the *carry*
-  event — the carry equals whatever the LAST action returned. EMIT actions
-  return ``{"name", "data"}``; SET / LOG / TIMER return ``None``.
+  event — the carry equals whatever the last carrying action returned. EMIT
+  returns ``{"name", "data"}``; SET / TIMER return ``None`` (clearing it).
+  LOG is transparent: it runs for its side effect but leaves the carry
+  alone, so a log line anywhere in the sequence never changes which event
+  cascades next.
 * On transition, run ``S.exit``, switch state, run ``T.enter``. The carry
-  is updated by every action that ran, so it ends up being the last
-  action's emit across the whole ``do → exit → enter`` chain.
+  is updated by every non-LOG action that ran, so it ends up being the last
+  such action's emit across the whole ``do → exit → enter`` chain.
 * If the carry is not ``None``, process it as the next event (cascade).
 * No handler for the event → quiesce.
 * Per-trigger cascade budget caps internal loops.
@@ -196,15 +199,20 @@ def _run_actions(
     initial,
     job: dict,
 ):
-    """Execute a list of action refs in order; return the LAST action's result.
+    """Execute a list of action refs in order; return the carrying result.
 
-    The carry rule: only the last action's return matters. If the last
-    action is SET/LOG/TIMER (returns None), the carry is None — overriding
-    any earlier EMIT in the same sequence.
+    The carry rule: only the last action's return matters — except ``LOG``,
+    which is transparent. A ``LOG`` runs for its side effect but leaves the
+    carry untouched, so it can be dropped anywhere in a sequence (including
+    last) without changing which event cascades next. ``EMIT`` sets the
+    carry; ``SET``/``TIMER`` clear it (return ``None``) when they run last.
     """
     carry = initial
     for ref in refs:
-        carry = _execute_action(ast["actions"][ref], ast, context, event, recorder, job)
+        action = ast["actions"][ref]
+        result = _execute_action(action, ast, context, event, recorder, job)
+        if action["type"] != "log":
+            carry = result
     return carry
 
 

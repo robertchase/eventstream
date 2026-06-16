@@ -231,7 +231,7 @@ workflows are authored. Given event `E` arriving in state `S` with handler
 
 ```
 run A in order
-carry = event emitted by the LAST action of A   # only the last counts
+carry = event emitted by the LAST carrying action of A   # LOG is transparent
 
 if no T:
   if carry: re-process carry in S               # cascade in current state
@@ -250,6 +250,10 @@ Consequences worth knowing when authoring:
 - **Only the last action's event carries.** Every emit still reaches its
   stream, but to make the FSM react to an emission, that emission must be
   the last in its sequence.
+- **`LOG` is transparent to the carry.** A `LOG` runs for its side effect
+  but never sets or clears the carry, so you can drop log lines anywhere in
+  a handler — including after the emit, or last — without changing which
+  event cascades next. (`SET` and `TIMER` still clear the carry when last.)
 - **No handler for the carried event → quiesce.** The normal case: an
   `ENTER` action emits a step event to a worker; the state has no handler
   for the worker's event yet, so the job waits for the worker's outcome

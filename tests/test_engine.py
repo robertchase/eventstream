@@ -198,6 +198,35 @@ STATE done TERMINAL
     assert context == {"y": "z"}
 
 
+def test_log_is_transparent_to_the_carry() -> None:
+    """A LOG after an EMIT does not clear the carry — the emit still cascades."""
+    wf = _wf("""\
+NAME w
+INITIAL s
+
+ACTION fan
+  EMIT places relay
+
+ACTION note
+  LOG handled go
+
+STATE s
+  EVENT go s
+    ACTION fan
+    ACTION note
+  EVENT relay done
+
+STATE done TERMINAL
+""")
+    rec = Recorder("j_1")
+    final = step(wf, "s", {}, {"name": "go", "data": {}}, recorder=rec)
+    # `fan` emitted `relay`; the trailing LOG left the carry intact, so `relay`
+    # cascaded and drove the second transition to `done`.
+    assert final == "done"
+    assert len(rec.emits) == 1
+    assert rec.logs == ["handled go"]
+
+
 # ---- Recorder shape --------------------------------------------------------
 
 
