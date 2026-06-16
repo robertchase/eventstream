@@ -51,6 +51,11 @@ class Recorder:
     Logs flow to ``eventstream.jobs`` immediately (with job_id correlation);
     emits, timers, and transitions accumulate for the persistence layer to
     flush atomically with the new job state.
+
+    ``journal`` is the ordered, mixed record of transitions and log lines as
+    they happened during the run; the persistence layer writes it to the
+    job's durable history so ``LOG`` output survives the step. ``logs`` and
+    ``transitions`` remain as filtered views for callers that want one kind.
     """
 
     def __init__(self, job_id: str) -> None:
@@ -59,6 +64,7 @@ class Recorder:
         self.timers: list[dict] = []
         self.logs: list[str] = []
         self.transitions: list[dict] = []
+        self.journal: list[dict] = []
 
     def emit(self, stream: str, event_type: str, payload: dict) -> dict:
         """Record an EMIT side effect and return its carry shape."""
@@ -70,14 +76,15 @@ class Recorder:
     def timer(self, event: str, delay_seconds: int) -> None:
         self.timers.append({"event": event, "delay_seconds": delay_seconds})
 
-    def log(self, message: str) -> None:
+    def log(self, message: str, *, state: str | None = None) -> None:
         self.logs.append(message)
+        self.journal.append({"kind": "log", "message": message, "state": state})
         _log.info("[job=%s] %s", self.job_id, message)
 
     def transition(self, from_state: str, event_name: str, to_state: str) -> None:
-        self.transitions.append(
-            {"from": from_state, "event": event_name, "to": to_state}
-        )
+        entry = {"from": from_state, "event": event_name, "to": to_state}
+        self.transitions.append(entry)
+        self.journal.append({"kind": "transition", **entry})
 
 
 def step(
@@ -223,7 +230,10 @@ def _execute_action(
         return None
 
     if op == "log":
-        recorder.log(_interpolate(action["message"], job, context, event))
+        recorder.log(
+            _interpolate(action["message"], job, context, event),
+            state=job.get("state"),
+        )
         return None
 
     if op == "timer":

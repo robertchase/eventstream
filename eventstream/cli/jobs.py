@@ -73,11 +73,15 @@ async def show(job_id: str, as_json: bool) -> None:
 @click.argument("job_id")
 @coroutine
 async def history(job_id: str) -> None:
-    """List a job's transition history."""
+    """List a job's history: transitions and LOG lines, in order."""
     for entry in await jobs.history(job_id):
-        click.echo(
-            f"{entry['ts']}\t{entry['from']}  --{entry['event']}-->  {entry['to']}"
-        )
+        if entry.get("kind") == "log":
+            where = f" [{entry['state']}]" if entry.get("state") else ""
+            click.echo(f"{entry['ts']}\tLOG{where}  {entry['message']}")
+        else:
+            click.echo(
+                f"{entry['ts']}\t{entry['from']}  --{entry['event']}-->  {entry['to']}"
+            )
 
 
 @jobs_group.command()

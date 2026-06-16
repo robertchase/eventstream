@@ -161,8 +161,12 @@ ACTION log-cancellation
   LOG order $job.id cancelled by $context.customer.email
 ```
 
-- Exactly one `LOG <message>` line. Level is implicit (info). The message
-  is rest-of-line, with `$`-references interpolated at runtime.
+- Exactly one `LOG <message>` line. The message is rest-of-line, with
+  `$`-references interpolated at runtime.
+- The line is recorded to the job's durable history (interleaved with
+  transitions, tagged with the state it ran in) and emitted to the
+  `eventstream` logger at info level. Operational logging to stderr is
+  opt-in via `EVENTSTREAM_LOG_LEVEL`; the history record is unconditional.
 
 ### `TIMER` — schedule a synthetic event back to this job
 

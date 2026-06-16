@@ -392,8 +392,8 @@ async def _persist_update(job_id, state, context, status, recorder, now):
 
 async def _flush_side_effects(client, job_id, recorder, now, *, current_state):
     """Publish recorded emits, append history, register routing map, schedule timers."""
-    for trans in recorder.transitions:
-        await client.rpush(_history_key(job_id), json.dumps({**trans, "ts": now}))
+    for entry in recorder.journal:
+        await client.rpush(_history_key(job_id), json.dumps({**entry, "ts": now}))
 
     for emit in recorder.emits:
         # The workflow's EMIT event-type becomes the event's name; _job is an

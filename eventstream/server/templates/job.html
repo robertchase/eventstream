@@ -34,20 +34,24 @@ workflow <a href="/workflows/{{ job.workflow }}"><code>{{ job.workflow }}</code>
 <h2>history ({{ history | length }})</h2>
 {% if history %}
 <table>
-<thead><tr><th>ts</th><th>from</th><th>event</th><th>to</th></tr></thead>
+<thead><tr><th>ts</th><th>type</th><th>detail</th></tr></thead>
 <tbody>
 {% for h in history %}
 <tr>
 <td class="muted">{{ h.ts | ts }}</td>
-<td><code>{{ h.from }}</code></td>
-<td><code>{{ h.event }}</code></td>
-<td><code>{{ h.to }}</code></td>
+{% if h.kind == "log" %}
+<td>log</td>
+<td>{% if h.state %}<code>{{ h.state }}</code> {% endif %}{{ h.message }}</td>
+{% else %}
+<td>transition</td>
+<td><code>{{ h.from }}</code> &mdash;<code>{{ h.event }}</code>&rarr; <code>{{ h.to }}</code></td>
+{% endif %}
 </tr>
 {% endfor %}
 </tbody>
 </table>
 {% else %}
-<p class="empty">no transitions yet</p>
+<p class="empty">no history yet</p>
 {% endif %}
 </section>
 </div>

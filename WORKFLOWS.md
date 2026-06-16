@@ -99,12 +99,19 @@ ACTION record-charge
   SET shipped_to $context.customer.address
 ```
 
-**`LOG`** — emit a log line (info level), with references interpolated:
+**`LOG`** — record a log line, with references interpolated:
 
 ```
 ACTION note-it
   LOG charged order for $context.customer.email
 ```
+
+The line is written to the job's durable **history** (visible in `eventstream
+jobs history <id>` and on the job page in the admin UI), tagged with the state
+it ran in and interleaved with transitions in order. It is *also* emitted to
+the `eventstream` Python logger at info level — set `EVENTSTREAM_LOG_LEVEL`
+(e.g. `INFO`) to have those print to stderr as the job runs; unset (the
+default), only the durable history record is kept.
 
 **`TIMER`** — schedule an event back to this job after a delay:
 

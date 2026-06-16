@@ -228,6 +228,32 @@ STATE done TERMINAL
     assert rec.timers == [{"event": "timeout", "delay_seconds": 30}]
 
 
+def test_journal_orders_logs_and_transitions_with_state() -> None:
+    """The journal records logs (tagged with their state) and transitions in
+    execution order; `logs`/`transitions` remain as filtered views."""
+    wf = _wf("""\
+NAME w
+INITIAL s
+
+ACTION note
+  LOG working
+
+STATE s
+  EVENT go done
+    ACTION note
+
+STATE done TERMINAL
+""")
+    rec = Recorder("j_1")
+    step(wf, "s", {}, {"name": "go", "data": {}}, recorder=rec)
+    assert rec.journal == [
+        {"kind": "log", "message": "working", "state": "s"},
+        {"kind": "transition", "from": "s", "event": "go", "to": "done"},
+    ]
+    assert rec.logs == ["working"]
+    assert rec.transitions == [{"from": "s", "event": "go", "to": "done"}]
+
+
 # ---- $job scope ------------------------------------------------------------
 
 _SCOPE = _wf("""\

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import click
 
+from eventstream import config as CONFIG
 from eventstream.cli import ack as ack_cmd
 from eventstream.cli import dlq as dlq_cmd
 from eventstream.cli import jobs as jobs_cmd
@@ -35,6 +36,7 @@ class _Group(click.Group):
 @click.group(cls=_Group)
 def cli() -> None:
     """A pull-based application event bus."""
+    CONFIG.configure_logging()
 
 
 cli.add_command(publish_cmd.publish)

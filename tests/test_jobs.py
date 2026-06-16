@@ -166,9 +166,53 @@ async def test_history_records_transitions() -> None:
     await jobs.advance(job["id"], "success", {})
     hist = await jobs.history(job["id"])
     assert len(hist) == 1
+    assert hist[0]["kind"] == "transition"
     assert hist[0]["from"] == "waiting"
     assert hist[0]["event"] == "success"
     assert hist[0]["to"] == "done"
+
+
+_WF_WITH_LOG = """\
+NAME    log-flow
+INITIAL waiting
+
+ACTION announce
+  LOG entered waiting
+
+ACTION wrap-up
+  LOG wrapping up
+
+STATE waiting
+  ENTER
+    ACTION announce
+  EVENT go done
+    ACTION wrap-up
+
+STATE done TERMINAL
+"""
+
+
+async def test_log_lines_recorded_in_history_in_order() -> None:
+    """LOG output is durable: it lands in job history, interleaved with the
+    transition and tagged with the state it ran in."""
+    await workflows.register(_WF_WITH_LOG)
+    job = await jobs.create("log-flow")
+
+    # The initial ENTER's LOG is recorded immediately, before any transition.
+    hist = await jobs.history(job["id"])
+    assert len(hist) == 1
+    assert hist[0]["kind"] == "log"
+    assert hist[0]["message"] == "entered waiting"
+    assert hist[0]["state"] == "waiting"
+
+    await jobs.advance(job["id"], "go", {})
+    hist = await jobs.history(job["id"])
+    assert [(e["kind"], e.get("message") or e.get("event")) for e in hist] == [
+        ("log", "entered waiting"),
+        ("log", "wrapping up"),  # LOG in the `do` runs before the transition
+        ("transition", "go"),
+    ]
+    assert hist[-1]["from"] == "waiting" and hist[-1]["to"] == "done"
 
 
 # ---- cancel ---------------------------------------------------------------

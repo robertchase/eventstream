@@ -79,6 +79,7 @@ def run(*, port: int | None = None) -> None:
     sweeper as a meander background task so timers fire without a separate
     ``eventstream jobs sweep`` process.
     """
+    CONFIG.configure_logging()
     build(port=port)
     if CONFIG.sweep_interval > 0:
         meander.add_task(lambda: jobs.sweep_forever(CONFIG.sweep_interval))

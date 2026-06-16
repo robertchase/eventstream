@@ -9,6 +9,7 @@ and read values as module attributes, e.g. ``CONFIG.redis_url``.
 
 from __future__ import annotations
 
+import logging
 import os
 
 redis_url: str = os.environ.get("EVENTSTREAM_REDIS_URL", "redis://localhost:6379/0")
@@ -49,3 +50,33 @@ sweep_interval: float = float(os.environ.get("EVENTSTREAM_SWEEP_INTERVAL", "0"))
 sweep`` as a standalone process instead. Set to a positive value to have the
 server fire due timers itself.
 """
+
+log_level: str | None = os.environ.get("EVENTSTREAM_LOG_LEVEL") or None
+"""Operational log level for the ``eventstream`` logger (e.g. ``INFO``).
+
+Unset (the default) leaves logging unconfigured, so the engine's ``LOG``
+directive and other library logs go nowhere on stderr. Set it to surface
+them — workflow ``LOG`` lines are recorded to durable job history regardless
+of this setting; this only controls whether they (and other internal logs)
+also print as the process runs. Honored by the CLI and the HTTP server.
+"""
+
+
+def configure_logging() -> None:
+    """Attach a stderr handler to the ``eventstream`` logger when configured.
+
+    A no-op unless :data:`log_level` is set, so importing the library never
+    touches global logging state. Scoped to the ``eventstream`` namespace so
+    third-party loggers (redis, etc.) are left alone. Idempotent — safe to
+    call from every CLI invocation and at server startup.
+    """
+    if not log_level:
+        return
+    logger = logging.getLogger("eventstream")
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
+        logger.addHandler(handler)
+    logger.setLevel(log_level.upper())
