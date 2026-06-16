@@ -251,6 +251,30 @@ async def test_inline_log_under_event_runs_and_is_transparent() -> None:
     assert hist[0]["state"] == "working"
 
 
+_WF_INLINE_LOG_ENTER = """\
+NAME    enter-log-flow
+INITIAL waiting
+
+STATE waiting
+  ENTER
+    LOG job created, waiting
+  EVENT go done
+
+STATE done TERMINAL
+"""
+
+
+async def test_inline_log_in_initial_enter_records_to_history() -> None:
+    """An inline LOG in the initial ENTER runs at create time and is durable."""
+    await workflows.register(_WF_INLINE_LOG_ENTER)
+    job = await jobs.create("enter-log-flow")
+    hist = await jobs.history(job["id"])
+    assert len(hist) == 1
+    assert hist[0]["kind"] == "log"
+    assert hist[0]["message"] == "job created, waiting"
+    assert hist[0]["state"] == "waiting"
+
+
 # ---- cancel ---------------------------------------------------------------
 
 

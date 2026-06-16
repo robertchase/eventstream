@@ -53,13 +53,13 @@ def validate(workflow: dict) -> None:
         if state.get("terminal"):
             continue
         for ref in state.get("enter", []):
-            if ref not in actions:
+            if isinstance(ref, str) and ref not in actions:
                 errors.append(
                     f"STATE {state_name!r} ENTER references "
                     f"undefined action {ref!r}"
                 )
         for ref in state.get("exit", []):
-            if ref not in actions:
+            if isinstance(ref, str) and ref not in actions:
                 errors.append(
                     f"STATE {state_name!r} EXIT references " f"undefined action {ref!r}"
                 )
@@ -138,12 +138,9 @@ class _Cursor:
         # Most-recently-seen STATE name (including terminal ones); used for
         # better error messages when ENTER/EXIT/EVENT lands in a terminal:
         self.last_state: str | None = None
-        # The list to append ACTION refs to inside ENTER/EXIT/EVENT/DEFAULT:
+        # The list to append actions to inside ENTER/EXIT/EVENT/DEFAULT —
+        # ACTION-name refs plus any inline LOG action dicts:
         self.handler_do: list | None = None
-        # Which kind of handler block ``handler_do`` belongs to — one of
-        # "enter"/"exit"/"event"/"default". Gates inline ``LOG`` (allowed
-        # only under EVENT/DEFAULT):
-        self.handler_kind: str | None = None
         # The action dict currently being defined at top level:
         self.action: dict | None = None
         # True once any STATE or DEFAULT has been seen; after that, any new
@@ -153,7 +150,6 @@ class _Cursor:
     def close_all(self) -> None:
         self.state = None
         self.handler_do = None
-        self.handler_kind = None
         self.action = None
 
 
@@ -277,7 +273,6 @@ def _do_default(workflow, cur, line_no, tokens):
     handler = {"do": [], "goto": goto}
     workflow["defaults"][event_name] = handler
     cur.handler_do = handler["do"]
-    cur.handler_kind = "default"
     cur.action = None
 
 
@@ -287,7 +282,6 @@ def _do_enter_exit(workflow, cur, line_no, kind):
             raise ParseError(line_no, f"{kind.upper()} not allowed in TERMINAL state")
         raise ParseError(line_no, f"{kind.upper()} outside STATE block")
     cur.handler_do = workflow["states"][cur.state][kind]
-    cur.handler_kind = kind
     cur.action = None
 
 
@@ -308,7 +302,6 @@ def _do_event(workflow, cur, line_no, tokens):
     handler = {"do": [], "goto": goto}
     state["events"][name] = handler
     cur.handler_do = handler["do"]
-    cur.handler_kind = "event"
     cur.action = None
 
 
@@ -346,16 +339,11 @@ def _do_log(cur, line_no, tokens, full_line):
         raise ParseError(line_no, "LOG requires a message")
     message = _rest_of_line(full_line, after=1)
 
-    # Inline LOG: a bare LOG line directly inside an EVENT/DEFAULT handler,
-    # with no named ACTION. It becomes an anonymous log action in the
-    # handler's do-list. Other ops (EMIT/SET/TIMER) still require an ACTION.
+    # Inline LOG: a bare LOG line directly inside any handler block
+    # (ENTER/EXIT/EVENT/DEFAULT), with no named ACTION. It becomes an
+    # anonymous log action in the handler's do-list. Other ops
+    # (EMIT/SET/TIMER) still require an ACTION.
     if cur.action is None and cur.handler_do is not None:
-        if cur.handler_kind not in ("event", "default"):
-            raise ParseError(
-                line_no,
-                "inline LOG is only allowed under EVENT or DEFAULT; "
-                "use a named ACTION for ENTER/EXIT",
-            )
         cur.handler_do.append({"type": "log", "message": message})
         return
 

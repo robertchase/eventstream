@@ -395,12 +395,33 @@ def test_inline_log_without_transition() -> None:
     }
 
 
-def test_inline_log_under_enter_is_rejected() -> None:
-    with pytest.raises(ParseError, match="inline LOG is only allowed under EVENT"):
-        parse(
-            "NAME w\nINITIAL s\n"
-            "STATE s\n"
-            "  ENTER\n"
-            "    LOG starting\n"
-            "STATE end TERMINAL\n"
-        )
+def test_inline_log_under_enter_and_exit() -> None:
+    """Inline LOG works in every handler block, including ENTER/EXIT."""
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "STATE s\n"
+        "  ENTER\n"
+        "    LOG starting\n"
+        "  EXIT\n"
+        "    LOG leaving\n"
+        "  EVENT go end\n"
+        "STATE end TERMINAL\n"
+    )
+    assert wf["states"]["s"]["enter"] == [{"type": "log", "message": "starting"}]
+    assert wf["states"]["s"]["exit"] == [{"type": "log", "message": "leaving"}]
+
+
+def test_inline_log_mixes_with_action_refs_in_enter() -> None:
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "ACTION fan\n  EMIT out go\n"
+        "STATE s\n"
+        "  ENTER\n"
+        "    LOG about to fan\n"
+        "    ACTION fan\n"
+        "STATE end TERMINAL\n"
+    )
+    assert wf["states"]["s"]["enter"] == [
+        {"type": "log", "message": "about to fan"},
+        "fan",
+    ]

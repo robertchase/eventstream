@@ -220,8 +220,8 @@ def resolve_action(ast: dict, ref) -> dict:
     """Resolve a ``do``-list entry to its action dict.
 
     Entries are usually action *names* (defined in ``ast["actions"]``), but
-    an EVENT/DEFAULT handler may carry an inline ``LOG`` as a literal action
-    dict — return it as-is.
+    a handler may carry an inline ``LOG`` as a literal action dict — return
+    it as-is.
     """
     return ref if isinstance(ref, dict) else ast["actions"][ref]
 

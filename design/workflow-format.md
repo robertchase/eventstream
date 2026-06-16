@@ -120,11 +120,10 @@ overrides; no inline emits.** Variants of an action are separate
 definitions.
 
 The one inline exception is `LOG`: a bare `LOG <message>` line may appear
-directly inside an `EVENT` (or `DEFAULT`) handler without a named action —
-handy for annotating a transition without the ceremony of defining one. It
-may be the handler's only directive or sit among `ACTION` references, in
-order. Inline `LOG` is *not* allowed under `ENTER`/`EXIT` (define a named
-action there). `EMIT`/`SET`/`TIMER` always require a named `ACTION`.
+directly inside any handler block — `ENTER`, `EXIT`, `EVENT`, or `DEFAULT` —
+without a named action, handy for annotating a step without the ceremony of
+defining one. It may be the handler's only directive or sit among `ACTION`
+references, in order. `EMIT`/`SET`/`TIMER` always require a named `ACTION`.
 
 Terminal states (`STATE done TERMINAL`) have no inner content — any
 `ENTER`/`EXIT`/`EVENT` inside a terminal state is a parse error.
@@ -232,7 +231,7 @@ DEFAULT error failed
 ```
 
 The most common use is `DEFAULT error failed` — every state's unhandled
-errors fall through to a terminal failed state. As under `EVENT`, a bare
+errors fall through to a terminal failed state. As in any handler, a bare
 `LOG <message>` may stand in for a named action here.
 
 ## Carry rule (evaluation semantics)
