@@ -28,8 +28,9 @@ def test_minimal_parses() -> None:
     assert wf["initial"] == "start"
     assert wf["description"] is None
     assert "noop" in wf["actions"]
-    assert wf["actions"]["noop"]["type"] == "set"
-    assert wf["actions"]["noop"]["fields"] == {"k": "v"}
+    assert wf["actions"]["noop"]["statements"] == [
+        {"type": "set", "fields": {"k": "v"}}
+    ]
     assert wf["states"]["start"]["enter"] == ["noop"]
     assert wf["states"]["start"]["events"]["done"] == {"do": [], "goto": "end"}
     assert wf["states"]["end"] == {"terminal": True}
@@ -88,22 +89,23 @@ STATE failed TERMINAL
     assert wf["description"] == "Charges card, ships order, notifies on failure"
     assert wf["initial"] == "charging"
     assert wf["defaults"]["error"] == {"do": [], "goto": "failed"}
-    # Emit action with payload references:
-    charge = wf["actions"]["charge-card"]
-    assert charge["type"] == "emit"
-    assert charge["stream"] == "payments"
-    assert charge["event"] == "charge"
-    assert charge["payload"] == {
-        "job": {"ref": "job.id"},
-        "amount": {"ref": "context.order.total"},
-    }
-    # Set action with multiple fields:
-    record = wf["actions"]["record-charge"]
-    assert record["type"] == "set"
-    assert record["fields"] == {
-        "txn_id": {"ref": "event.data.txn_id"},
-        "charged_at": {"ref": "job.now"},
-    }
+    # Emit action: a single EMIT statement with payload references.
+    assert wf["actions"]["charge-card"]["statements"] == [
+        {
+            "type": "emit",
+            "stream": "payments",
+            "event": "charge",
+            "payload": {
+                "job": {"ref": "job.id"},
+                "amount": {"ref": "context.order.total"},
+            },
+        }
+    ]
+    # Two SET lines → two SET statements, in order.
+    assert wf["actions"]["record-charge"]["statements"] == [
+        {"type": "set", "fields": {"txn_id": {"ref": "event.data.txn_id"}}},
+        {"type": "set", "fields": {"charged_at": {"ref": "job.now"}}},
+    ]
     # State with multiple events:
     charging = wf["states"]["charging"]
     assert charging["enter"] == ["charge-card"]
@@ -126,27 +128,24 @@ def test_log_action() -> None:
         "ACTION speak\n  LOG hello $context.user\n"
         "STATE s TERMINAL\n"
     )
-    assert wf["actions"]["speak"] == {
-        "type": "log",
-        "message": "hello $context.user",
-    }
+    assert wf["actions"]["speak"]["statements"] == [
+        {"type": "log", "message": "hello $context.user"},
+    ]
 
 
 def test_timer_action_parses_duration() -> None:
     wf = parse(
         "NAME w\nINITIAL s\n" "ACTION wait\n  TIMER 10m timeout\n" "STATE s TERMINAL\n"
     )
-    assert wf["actions"]["wait"] == {
-        "type": "timer",
-        "delay_seconds": 600,
-        "event": "timeout",
-    }
+    assert wf["actions"]["wait"]["statements"] == [
+        {"type": "timer", "delay_seconds": 600, "event": "timeout"},
+    ]
 
 
 def test_timer_unit_suffixes() -> None:
     def dur(s: str) -> int:
         wf = parse(f"NAME w\nINITIAL s\nACTION a\n  TIMER {s} t\nSTATE s TERMINAL\n")
-        return wf["actions"]["a"]["delay_seconds"]
+        return wf["actions"]["a"]["statements"][0]["delay_seconds"]
 
     assert dur("45s") == 45
     assert dur("2m") == 120
@@ -168,7 +167,9 @@ def test_set_value_can_contain_spaces() -> None:
         "ACTION a\n  SET label A multi word value\n"
         "STATE s TERMINAL\n"
     )
-    assert wf["actions"]["a"]["fields"] == {"label": "A multi word value"}
+    assert wf["actions"]["a"]["statements"] == [
+        {"type": "set", "fields": {"label": "A multi word value"}}
+    ]
 
 
 def test_dollar_prefix_means_reference() -> None:
@@ -177,7 +178,9 @@ def test_dollar_prefix_means_reference() -> None:
         "ACTION a\n  SET copy $context.thing\n"
         "STATE s TERMINAL\n"
     )
-    assert wf["actions"]["a"]["fields"]["copy"] == {"ref": "context.thing"}
+    assert wf["actions"]["a"]["statements"] == [
+        {"type": "set", "fields": {"copy": {"ref": "context.thing"}}}
+    ]
 
 
 # ---- comments and whitespace ------------------------------------------------
@@ -232,27 +235,43 @@ def test_action_reference_must_exist() -> None:
         )
 
 
-def test_action_with_no_operation_fails() -> None:
-    with pytest.raises(ParseError, match="ACTION 'empty' has no operation"):
+def test_action_with_no_statements_fails() -> None:
+    with pytest.raises(ParseError, match="ACTION 'empty' has no statements"):
         parse("NAME w\nINITIAL s\n" "ACTION empty\n" "STATE s TERMINAL\n")
 
 
-def test_mixed_op_types_in_action_fails() -> None:
-    with pytest.raises(ParseError, match="cannot add EMIT"):
+def test_action_mixes_statement_types_in_order() -> None:
+    """An ACTION holds any number of EMIT/SET/LOG/TIMER statements, in order."""
+    wf = parse(
+        "NAME w\nINITIAL s\n"
+        "ACTION mix\n"
+        "  SET k v\n"
+        "  EMIT a b\n"
+        "    PAYLOAD p $context.q\n"
+        "  LOG did a thing\n"
+        "  EMIT c d\n"
+        "STATE s TERMINAL\n"
+    )
+    assert wf["actions"]["mix"]["statements"] == [
+        {"type": "set", "fields": {"k": "v"}},
+        {
+            "type": "emit",
+            "stream": "a",
+            "event": "b",
+            "payload": {"p": {"ref": "context.q"}},
+        },
+        {"type": "log", "message": "did a thing"},
+        {"type": "emit", "stream": "c", "event": "d", "payload": {}},
+    ]
+
+
+def test_payload_after_a_non_emit_statement_fails() -> None:
+    """A LOG/SET ends the open EMIT, so a trailing PAYLOAD has nothing to attach to."""
+    with pytest.raises(ParseError, match="PAYLOAD must directly follow an EMIT"):
         parse(
             "NAME w\nINITIAL s\n"
             "ACTION mix\n"
-            "  SET k v\n"
             "  EMIT a b\n"
-            "STATE s TERMINAL\n"
-        )
-
-
-def test_payload_outside_emit_fails() -> None:
-    with pytest.raises(ParseError, match="PAYLOAD is only valid inside an EMIT"):
-        parse(
-            "NAME w\nINITIAL s\n"
-            "ACTION mix\n"
             "  SET k v\n"
             "  PAYLOAD x y\n"
             "STATE s TERMINAL\n"

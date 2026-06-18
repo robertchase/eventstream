@@ -293,6 +293,45 @@ async def test_inline_log_in_initial_enter_records_to_history() -> None:
     assert hist[0]["state"] == "waiting"
 
 
+_WF_MULTI_STATEMENT = """\
+NAME    multi-flow
+INITIAL waiting
+
+ACTION kickoff
+  SET status started
+  EMIT outbound begin
+  PAYLOAD job $job.id
+  LOG kicked off
+
+STATE waiting
+  ENTER
+    ACTION kickoff
+  EVENT done end
+
+STATE end TERMINAL
+"""
+
+
+async def test_multi_statement_action_persists_emits_and_logs() -> None:
+    """One ACTION with SET + EMIT + LOG: context persists, the event is
+    published, and the log lands in history — all in order."""
+    await workflows.register(_WF_MULTI_STATEMENT)
+    await subscriptions.create("worker", "outbound")
+    job = await jobs.create("multi-flow")
+
+    assert (await jobs.get(job["id"]))["context"] == {"status": "started"}
+    event = await events.pull("worker", wait=0)
+    assert event["name"] == "begin"
+    assert event["payload"]["_job"] == job["id"]
+    hist = await jobs.history(job["id"])
+    assert hist[-1] == {
+        "kind": "log",
+        "message": "kicked off",
+        "state": "waiting",
+        "ts": hist[-1]["ts"],
+    }
+
+
 # ---- cancel ---------------------------------------------------------------
 
 

@@ -92,7 +92,8 @@ def _print_summary(wf: dict) -> None:
             click.echo(f"  {event}{goto}  ({len(handler['do'])} actions)")
     click.echo(f"actions:     {len(ast['actions'])}")
     for name, action in ast["actions"].items():
-        click.echo(f"  {name}: {action['type']}")
+        kinds = ", ".join(stmt["type"] for stmt in action["statements"])
+        click.echo(f"  {name}: {kinds}")
     click.echo(f"states:      {len(ast['states'])}")
     for name, state in ast["states"].items():
         if state.get("terminal"):

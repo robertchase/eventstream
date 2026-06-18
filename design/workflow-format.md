@@ -97,7 +97,7 @@ STATE failed TERMINAL
 | `INITIAL <state>` | one token | Starting state. Required, set once. |
 | `DESCRIPTION <text>` | rest-of-line | Optional, admin display. |
 | `STATE <name> [TERMINAL]` | one or two tokens | Open a state block. Trailing `TERMINAL` marks the state as final (no `EVENT` directives allowed). |
-| `ACTION <name>` | one token | Open a named action definition block. The action's operation type is set by the first directive inside the block. |
+| `ACTION <name>` | one token | Open a named action definition block. The block holds a sequence of statements (`EMIT`/`SET`/`LOG`/`TIMER`), run in order. |
 | `DEFAULT <event> [<next-state>]` | event + optional state | Workflow-wide fallback handler for an event. Same shape as `EVENT`. Fires only when the current state has no `EVENT <event>`. |
 
 There is **no `VERSION` directive in the file** — version is server-assigned
@@ -130,8 +130,26 @@ Terminal states (`STATE done TERMINAL`) have no inner content — any
 
 ## Action blocks
 
-Each `ACTION name` block contains exactly one operation type. The first
-operation directive sets the type; subsequent directives must match.
+An `ACTION name` block holds a **sequence of statements** — any number of
+`EMIT`, `SET`, `LOG`, and `TIMER` lines, run in order. They may repeat and
+interleave freely:
+
+```
+ACTION charge-and-record
+  LOG charging $context.order.id
+  EMIT payments charge
+  PAYLOAD amount $context.order.total
+  SET attempted yes
+```
+
+`EMIT` is the only **multi-line** statement: its `PAYLOAD` lines extend it
+until the next statement (a `LOG`/`SET`/`EMIT`/`TIMER`, or the end of the
+block) closes it. So a `PAYLOAD` that doesn't directly follow an `EMIT` (or
+its earlier `PAYLOAD`s) is an error.
+
+How the statements affect the cascade (see *Carry rule*): the carry is the
+result of the **last carrying statement** — `EMIT` sets it, `SET`/`TIMER`
+clear it, and `LOG` is transparent (leaves it untouched).
 
 ### `EMIT` — publish an event to a stream
 
@@ -143,11 +161,11 @@ ACTION charge-card
 ```
 
 - `EMIT <stream> <event>` — exactly two arguments.
-- `PAYLOAD <key> <value>` — zero or more lines. Each line adds a field to
-  the emit's payload. The value is everything after the second token (so
-  values can contain spaces).
+- `PAYLOAD <key> <value>` — zero or more lines immediately following the
+  `EMIT`. Each adds a field to that emit's payload. The value is everything
+  after the second token (so values can contain spaces).
 
-### `SET` — patch fields into the job context
+### `SET` — patch a field into the job context
 
 ```
 ACTION record-charge
@@ -155,19 +173,17 @@ ACTION record-charge
   SET charged_at $job.now
 ```
 
-- One or more `SET <key> <value>` lines in the block. Each adds (or
-  overwrites) a key in the job's context.
-- Multiple `SET` lines are allowed in a single action block, so a logical
-  "cluster of field updates" stays as one named action.
+- `SET <key> <value>` — each line adds (or overwrites) one key in the job's
+  context. Repeat for several fields.
 
-### `LOG` — emit a log entry
+### `LOG` — record a log entry
 
 ```
 ACTION log-cancellation
   LOG order $job.id cancelled by $context.customer.email
 ```
 
-- Exactly one `LOG <message>` line. The message is rest-of-line, with
+- `LOG <message>` — the message is rest-of-line, with
   `$`-references interpolated at runtime.
 - The line is recorded to the job's durable history (interleaved with
   transitions, tagged with the state it ran in) and emitted to the
@@ -181,7 +197,7 @@ ACTION schedule-followup
   TIMER 24h followup-due
 ```
 
-- Exactly one `TIMER <duration> <event>` line.
+- `TIMER <duration> <event>` — schedules the event back to this job.
 - Duration is a single token: an integer followed by a unit suffix —
   `s` seconds, `m` minutes, `h` hours, `d` days. Examples: `30s`, `10m`,
   `1h`, `7d`. No compound durations in v1.
@@ -285,10 +301,9 @@ then walks the AST and rejects:
   isn't a defined state.
 - Any `ACTION <ref>` inside `ENTER`/`EXIT`/`EVENT` where `<ref>` isn't a
   defined action.
-- `ACTION` blocks with no operation directive (`EMIT`/`SET`/`LOG`/`TIMER`).
+- `ACTION` blocks with no statements (`EMIT`/`SET`/`LOG`/`TIMER`).
 - `ENTER`/`EXIT`/`EVENT` inside a terminal state.
-- `EMIT` blocks with mixed operation types, `SET` mixed with non-SET ops,
-  or `PAYLOAD` outside an `EMIT` action.
+- A `PAYLOAD` that doesn't directly follow an `EMIT` (or its `PAYLOAD`s).
 - References in `SET`/`LOG`/`PAYLOAD` whose path root is not `job`,
   `context`, or `event`.
 

@@ -201,18 +201,20 @@ def _run_actions(
 ):
     """Execute a list of action refs in order; return the carrying result.
 
-    The carry rule: only the last action's return matters — except ``LOG``,
-    which is transparent. A ``LOG`` runs for its side effect but leaves the
-    carry untouched, so it can be dropped anywhere in a sequence (including
-    last) without changing which event cascades next. ``EMIT`` sets the
-    carry; ``SET``/``TIMER`` clear it (return ``None``) when they run last.
+    Each action is a sequence of statements (EMIT / SET / LOG / TIMER); the
+    statements of every action are run in order as one flat sequence. The
+    carry rule: the carry is the result of the last statement that ran —
+    except ``LOG``, which is transparent. A ``LOG`` runs for its side effect
+    but leaves the carry untouched, so it can sit anywhere (including last)
+    without changing which event cascades next. ``EMIT`` sets the carry;
+    ``SET``/``TIMER`` clear it (return ``None``).
     """
     carry = initial
     for ref in refs:
-        action = resolve_action(ast, ref)
-        result = _execute_action(action, ast, context, event, recorder, job)
-        if action["type"] != "log":
-            carry = result
+        for stmt in _statements_of(resolve_action(ast, ref)):
+            result = _execute_statement(stmt, context, event, recorder, job)
+            if stmt["type"] != "log":
+                carry = result
     return carry
 
 
@@ -220,45 +222,51 @@ def resolve_action(ast: dict, ref) -> dict:
     """Resolve a ``do``-list entry to its action dict.
 
     Entries are usually action *names* (defined in ``ast["actions"]``), but
-    a handler may carry an inline ``LOG`` as a literal action dict — return
-    it as-is.
+    a handler may carry an inline ``LOG`` as a literal statement dict —
+    return it as-is.
     """
     return ref if isinstance(ref, dict) else ast["actions"][ref]
 
 
-def _execute_action(
-    action: dict, ast: dict, context: dict, event: dict, recorder: Recorder, job: dict
+def _statements_of(resolved: dict) -> list:
+    """Statements of a resolved do-entry: a named action's list, or a lone
+    inline statement (e.g. an inline ``LOG``) wrapped as a one-item list."""
+    return resolved["statements"] if "statements" in resolved else [resolved]
+
+
+def _execute_statement(
+    stmt: dict, context: dict, event: dict, recorder: Recorder, job: dict
 ):
-    """Execute one action against the ``job``/``context``/``event`` scopes.
+    """Execute one statement against the ``job``/``context``/``event`` scopes.
 
     Returns its carry (EMIT) or ``None`` (SET/LOG/TIMER). ``job`` is the
     ``$job`` reference scope built by :func:`_job_scope`.
     """
-    op = action["type"]
+    op = stmt["type"]
 
     if op == "emit":
         payload = {
-            k: _resolve(v, job, context, event) for k, v in action["payload"].items()
+            k: _resolve(v, job, context, event) for k, v in stmt["payload"].items()
         }
-        return recorder.emit(action["stream"], action["event"], payload)
+        return recorder.emit(stmt["stream"], stmt["event"], payload)
 
     if op == "set":
-        for k, v in action["fields"].items():
+        for k, v in stmt["fields"].items():
             context[k] = _resolve(v, job, context, event)
         return None
 
     if op == "log":
         recorder.log(
-            _interpolate(action["message"], job, context, event),
+            _interpolate(stmt["message"], job, context, event),
             state=job.get("state"),
         )
         return None
 
     if op == "timer":
-        recorder.timer(action["event"], action["delay_seconds"])
+        recorder.timer(stmt["event"], stmt["delay_seconds"])
         return None
 
-    raise EngineError(f"unknown action type {op!r}")
+    raise EngineError(f"unknown statement type {op!r}")
 
 
 def _resolve(value, job: dict, context: dict, event: dict):

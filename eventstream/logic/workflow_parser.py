@@ -90,9 +90,9 @@ def validate(workflow: dict) -> None:
                 )
 
     for name, action in actions.items():
-        if action.get("type") is None:
+        if not action["statements"]:
             errors.append(
-                f"ACTION {name!r} has no operation " f"(EMIT / SET / LOG / TIMER)"
+                f"ACTION {name!r} has no statements " f"(EMIT / SET / LOG / TIMER)"
             )
             continue
         for path in _refs_in_action(action):
@@ -141,8 +141,11 @@ class _Cursor:
         # The list to append actions to inside ENTER/EXIT/EVENT/DEFAULT —
         # ACTION-name refs plus any inline LOG action dicts:
         self.handler_do: list | None = None
-        # The action dict currently being defined at top level:
+        # The action dict (``{"statements": [...]}``) being defined at top
+        # level, plus the open EMIT statement that trailing PAYLOAD lines
+        # extend (``None`` unless the last statement was an EMIT):
         self.action: dict | None = None
+        self.statement: dict | None = None
         # True once any STATE or DEFAULT has been seen; after that, any new
         # top-level ACTION (a definition, not a reference) is an error:
         self.structure_seen: bool = False
@@ -151,6 +154,7 @@ class _Cursor:
         self.state = None
         self.handler_do = None
         self.action = None
+        self.statement = None
 
 
 def _dispatch(
@@ -253,7 +257,8 @@ def _do_action_def(workflow, cur, line_no, tokens):
     name = tokens[1]
     if name in workflow["actions"]:
         raise ParseError(line_no, f"ACTION {name!r} already defined")
-    cur.action = {}
+    cur.action = {"statements": []}
+    cur.statement = None
     workflow["actions"][name] = cur.action
 
 
@@ -274,6 +279,7 @@ def _do_default(workflow, cur, line_no, tokens):
     workflow["defaults"][event_name] = handler
     cur.handler_do = handler["do"]
     cur.action = None
+    cur.statement = None
 
 
 def _do_enter_exit(workflow, cur, line_no, kind):
@@ -283,6 +289,7 @@ def _do_enter_exit(workflow, cur, line_no, kind):
         raise ParseError(line_no, f"{kind.upper()} outside STATE block")
     cur.handler_do = workflow["states"][cur.state][kind]
     cur.action = None
+    cur.statement = None
 
 
 def _do_event(workflow, cur, line_no, tokens):
@@ -303,35 +310,28 @@ def _do_event(workflow, cur, line_no, tokens):
     state["events"][name] = handler
     cur.handler_do = handler["do"]
     cur.action = None
+    cur.statement = None
 
 
 def _do_emit(cur, line_no, tokens):
     action = _require_action(cur, line_no, "EMIT")
-    if action.get("type") is not None:
-        raise ParseError(
-            line_no, f"ACTION already has type {action['type']!r}; cannot add EMIT"
-        )
     if len(tokens) != 3:
         raise ParseError(line_no, "EMIT requires <stream> <event>")
-    action["type"] = "emit"
-    action["stream"] = tokens[1]
-    action["event"] = tokens[2]
-    action["payload"] = {}
+    # EMIT is the only multi-line statement: it stays "open" so trailing
+    # PAYLOAD lines extend it, until the next statement closes it.
+    statement = {"type": "emit", "stream": tokens[1], "event": tokens[2], "payload": {}}
+    action["statements"].append(statement)
+    cur.statement = statement
 
 
 def _do_set(cur, line_no, tokens, full_line):
     action = _require_action(cur, line_no, "SET")
-    existing = action.get("type")
-    if existing is None:
-        action["type"] = "set"
-        action["fields"] = {}
-    elif existing != "set":
-        raise ParseError(line_no, f"SET in {existing!r} action")
     if len(tokens) < 3:
         raise ParseError(line_no, "SET requires <key> <value>")
     key = tokens[1]
     value = _rest_of_line(full_line, after=2)
-    action["fields"][key] = _parse_value(value)
+    action["statements"].append({"type": "set", "fields": {key: _parse_value(value)}})
+    cur.statement = None  # ends any open EMIT
 
 
 def _do_log(cur, line_no, tokens, full_line):
@@ -341,43 +341,39 @@ def _do_log(cur, line_no, tokens, full_line):
 
     # Inline LOG: a bare LOG line directly inside any handler block
     # (ENTER/EXIT/EVENT/DEFAULT), with no named ACTION. It becomes an
-    # anonymous log action in the handler's do-list. Other ops
-    # (EMIT/SET/TIMER) still require an ACTION.
+    # anonymous log statement in the handler's do-list.
     if cur.action is None and cur.handler_do is not None:
         cur.handler_do.append({"type": "log", "message": message})
         return
 
     action = _require_action(cur, line_no, "LOG")
-    if action.get("type") is not None:
-        raise ParseError(
-            line_no, f"ACTION already has type {action['type']!r}; cannot add LOG"
-        )
-    action["type"] = "log"
-    action["message"] = message
+    action["statements"].append({"type": "log", "message": message})
+    cur.statement = None  # ends any open EMIT
 
 
 def _do_timer(cur, line_no, tokens):
     action = _require_action(cur, line_no, "TIMER")
-    if action.get("type") is not None:
-        raise ParseError(
-            line_no, f"ACTION already has type {action['type']!r}; cannot add TIMER"
-        )
     if len(tokens) != 3:
         raise ParseError(line_no, "TIMER requires <duration> <event>")
-    action["type"] = "timer"
-    action["delay_seconds"] = _parse_duration(line_no, tokens[1])
-    action["event"] = tokens[2]
+    action["statements"].append(
+        {
+            "type": "timer",
+            "delay_seconds": _parse_duration(line_no, tokens[1]),
+            "event": tokens[2],
+        }
+    )
+    cur.statement = None  # ends any open EMIT
 
 
 def _do_payload(cur, line_no, tokens, full_line):
-    action = _require_action(cur, line_no, "PAYLOAD")
-    if action.get("type") != "emit":
-        raise ParseError(line_no, "PAYLOAD is only valid inside an EMIT action")
+    _require_action(cur, line_no, "PAYLOAD")
+    if cur.statement is None or cur.statement["type"] != "emit":
+        raise ParseError(line_no, "PAYLOAD must directly follow an EMIT")
     if len(tokens) < 3:
         raise ParseError(line_no, "PAYLOAD requires <key> <value>")
     key = tokens[1]
     value = _rest_of_line(full_line, after=2)
-    action["payload"][key] = _parse_value(value)
+    cur.statement["payload"][key] = _parse_value(value)
 
 
 def _require_action(cur, line_no, directive):
@@ -412,13 +408,14 @@ def _parse_duration(line_no: int, dur: str) -> int:
 
 
 def _refs_in_action(action: dict):
-    """Yield every reference path used by an action's payload/fields/message."""
-    if action["type"] == "emit":
-        for v in action["payload"].values():
+    """Yield every reference path used across an action's statements."""
+    for stmt in action["statements"]:
+        if stmt["type"] == "emit":
+            values = stmt["payload"].values()
+        elif stmt["type"] == "set":
+            values = stmt["fields"].values()
+        else:
+            continue  # LOG/TIMER refs (message/event name) are deferred
+        for v in values:
             if isinstance(v, dict) and "ref" in v:
                 yield v["ref"]
-    elif action["type"] == "set":
-        for v in action["fields"].values():
-            if isinstance(v, dict) and "ref" in v:
-                yield v["ref"]
-    # LOG and TIMER references would be in the message/event name; deferred.

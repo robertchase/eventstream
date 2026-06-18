@@ -79,8 +79,22 @@ There is no `VERSION` — the server assigns one each time you register.
 
 ### Actions
 
-An action is a named, declarative operation. **All action definitions must
-come before the first `STATE` or `DEFAULT`.** Each block is exactly one of:
+An action is a named, declarative sequence of statements. **All action
+definitions must come before the first `STATE` or `DEFAULT`.** A block holds
+any number of `EMIT`, `SET`, `LOG`, and `TIMER` statements, run in order — they
+may repeat and interleave:
+
+```
+ACTION charge-and-record
+  LOG charging $context.order.id
+  EMIT payments charge
+  PAYLOAD amount $context.order.total
+  SET attempted yes
+```
+
+`EMIT` is the only multi-line statement: its `PAYLOAD` lines extend it until
+the next statement (`LOG`/`SET`/`EMIT`/`TIMER`) closes it. The four statement
+kinds:
 
 **`EMIT`** — publish an event to a stream (this is how work reaches a worker):
 
@@ -91,7 +105,7 @@ ACTION charge-card
   PAYLOAD amount $context.order.total
 ```
 
-**`SET`** — write fields into the job's context (one or more lines):
+**`SET`** — write a field into the job's context (one key per line):
 
 ```
 ACTION record-charge
@@ -245,9 +259,10 @@ current state.
 
 - **Action definitions go before `STATE`/`DEFAULT`.** Otherwise the parser
   can't tell an action *definition* from a *reference*; it reports the line.
-- **Only the last action in a sequence carries an event** to the FSM — but
-  `LOG` is transparent: drop it anywhere (even last) and the carry is
-  unaffected. `SET`/`TIMER` still clear the carry when last.
+- **Only the last carrying statement carries an event** to the FSM (across
+  all the actions a handler runs) — but `LOG` is transparent: drop it
+  anywhere (even last) and the carry is unaffected. `SET`/`TIMER` clear the
+  carry when last.
 - **Terminal states take no events** — listing one is a parse error.
 - **`ENTER`/`EXIT` have no `$event`** — reference `$context` / `$job` only.
 - **No expressions** — branching is by event name, not by condition.

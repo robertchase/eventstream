@@ -227,6 +227,63 @@ STATE done TERMINAL
     assert rec.logs == ["handled go"]
 
 
+# ---- multi-statement actions -----------------------------------------------
+
+
+def test_action_runs_its_statements_in_order_and_emit_carries() -> None:
+    """One ACTION = SET then EMIT then LOG: the SET applies, the EMIT carries
+    (the trailing LOG is transparent), so the emitted event cascades."""
+    wf = _wf("""\
+NAME w
+INITIAL s
+
+ACTION work
+  SET status active
+  EMIT places go
+  LOG working
+
+STATE s
+  EVENT trigger s
+    ACTION work
+  EVENT go done
+
+STATE done TERMINAL
+""")
+    context = {}
+    rec = Recorder("j_1")
+    final = step(wf, "s", context, {"name": "trigger", "data": {}}, recorder=rec)
+    assert final == "done"
+    assert context == {"status": "active"}
+    assert len(rec.emits) == 1 and rec.emits[0]["event_type"] == "go"
+    assert rec.logs == ["working"]
+
+
+def test_set_after_emit_within_one_action_clears_the_carry() -> None:
+    """A SET after the EMIT (same action) is the last carrying statement, so
+    the emit fires as a side effect but does not cascade."""
+    wf = _wf("""\
+NAME w
+INITIAL s
+
+ACTION work
+  EMIT places go
+  SET k v
+
+STATE s
+  EVENT trigger s
+    ACTION work
+  EVENT go done
+
+STATE done TERMINAL
+""")
+    context = {}
+    rec = Recorder("j_1")
+    final = step(wf, "s", context, {"name": "trigger", "data": {}}, recorder=rec)
+    assert final == "s"  # no cascade — SET cleared the carry
+    assert len(rec.emits) == 1
+    assert context == {"k": "v"}
+
+
 # ---- Recorder shape --------------------------------------------------------
 
 
