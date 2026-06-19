@@ -15,6 +15,14 @@ def stream() -> None:
     """Manage streams."""
 
 
+@stream.command()
+@click.argument("name")
+@coroutine
+async def create(name: str) -> None:
+    """Create an empty stream NAME (fails if it already exists)."""
+    await streams.create(name)
+
+
 @stream.command(name="list")
 @coroutine
 async def list_() -> None:

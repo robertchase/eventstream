@@ -15,6 +15,10 @@ class StreamNotFound(EventStreamError):
     """A referenced stream does not exist."""
 
 
+class StreamExists(EventStreamError):
+    """A stream with the same name already exists."""
+
+
 class SubscriptionNotFound(EventStreamError):
     """A referenced subscription does not exist."""
 

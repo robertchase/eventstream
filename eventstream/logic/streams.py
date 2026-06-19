@@ -10,7 +10,11 @@ import json
 from datetime import UTC, datetime
 
 from eventstream.logic import backend
-from eventstream.logic.exceptions import EventStreamError, StreamNotFound
+from eventstream.logic.exceptions import (
+    EventStreamError,
+    StreamExists,
+    StreamNotFound,
+)
 
 _REGISTRY = "eventstream:streams"
 
@@ -27,6 +31,23 @@ def key(name: str) -> str:
 async def register(name: str) -> None:
     """Record that a stream exists (idempotent)."""
     await backend.client().sadd(_REGISTRY, name)
+
+
+async def create(name: str) -> None:
+    """Create an empty stream up front, before any publish or subscription.
+
+    Materializes the underlying (empty) Redis stream — via a throwaway
+    consumer group with ``MKSTREAM``, removed immediately so no group is
+    left behind — and registers it, so ``show``/``peek``/``list`` see it
+    right away. Raises :class:`StreamExists` if it is already known; never
+    touches an existing stream's data.
+    """
+    client = backend.client()
+    if await client.sismember(_REGISTRY, name):
+        raise StreamExists(f"stream {name!r} already exists")
+    await client.xgroup_create(key(name), "__create__", id="$", mkstream=True)
+    await client.xgroup_destroy(key(name), "__create__")
+    await register(name)
 
 
 async def list_() -> list[str]:

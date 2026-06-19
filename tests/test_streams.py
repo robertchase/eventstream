@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from eventstream.logic import events, streams, subscriptions
-from eventstream.logic.exceptions import StreamNotFound
+from eventstream.logic.exceptions import StreamExists, StreamNotFound
 
 
 async def test_publish_registers_stream() -> None:
@@ -18,6 +18,38 @@ async def test_list_is_sorted_and_deduped() -> None:
     await events.publish("orders", "ev", {"n": 2})
     await events.publish("billing", "ev", {"n": 3})
     assert await streams.list_() == ["billing", "orders"]
+
+
+# ---- create -----------------------------------------------------------------
+
+
+async def test_create_makes_an_empty_registered_stream() -> None:
+    await streams.create("orders")
+    assert await streams.list_() == ["orders"]
+    info = await streams.show("orders")
+    assert info["length"] == 0
+    assert info["first"] is None and info["last"] is None
+    assert info["groups"] == []  # the throwaway create-group is gone
+    assert await streams.peek("orders") == []
+
+
+async def test_create_then_publish_appends() -> None:
+    await streams.create("orders")
+    await events.publish("orders", "ev", {"n": 1})
+    assert (await streams.show("orders"))["length"] == 1
+
+
+async def test_create_existing_stream_raises() -> None:
+    await streams.create("orders")
+    with pytest.raises(StreamExists):
+        await streams.create("orders")
+
+
+async def test_create_refuses_and_preserves_a_stream_with_events() -> None:
+    await events.publish("orders", "ev", {"n": 1})  # registers + materializes
+    with pytest.raises(StreamExists):
+        await streams.create("orders")
+    assert (await streams.show("orders"))["length"] == 1  # data untouched
 
 
 async def test_show_unknown_stream_raises() -> None:
