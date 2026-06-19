@@ -1,0 +1,31 @@
+# run an os upgrade
+#
+# context:
+#   devicename - dns name of device to upgrade
+#   filename - name of new binary
+# stream:
+#   events are produced on os-upgrade
+
+NAME os-upgrade
+INITIAL uploading
+
+ACTION upload
+  LOG j=$job.id devicename=$context.devicename filename=$context.filename
+  EMIT os-upgrade upload
+  PAYLOAD devicename $context.devicename
+  PAYLOAD filename $context.filename
+
+ACTION upgrade
+  LOG j=$job.id upload complete for devicename=$context.devicename
+  EMIT os-upgrade upgrade
+
+STATE uploading
+  ENTER
+    ACTION upload
+  EVENT complete upgrading
+    ACTION upgrade
+
+STATE upgrading
+  EVENT complete done
+
+STATE done TERMINAL
